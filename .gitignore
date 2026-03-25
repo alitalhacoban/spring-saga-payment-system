@@ -1,0 +1,85 @@
+# ─── Claude ───────────────────────────────────────────────────────────────────
+.claude/
+
+# ─── Maven ────────────────────────────────────────────────────────────────────
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+*.class
+*.jar
+*.war
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# ─── Maven Wrapper ────────────────────────────────────────────────────────────
+.mvn/wrapper/maven-wrapper.properties
+mvnw
+mvnw.cmd
+
+# ─── Spring Boot ──────────────────────────────────────────────────────────────
+spring-shell.log
+*.log
+logs/
+
+# ─── gRPC / Protobuf (generated sources) ─────────────────────────────────────
+**/generated-sources/
+**/generated-test-sources/
+
+# ─── IntelliJ IDEA ───────────────────────────────────────────────────────────
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+.idea_modules/
+
+# ─── VS Code ──────────────────────────────────────────────────────────────────
+.vscode/
+*.code-workspace
+
+# ─── Eclipse ──────────────────────────────────────────────────────────────────
+.classpath
+.project
+.settings/
+.factorypath
+bin/
+
+# ─── NetBeans ─────────────────────────────────────────────────────────────────
+nbproject/private/
+nbbuild/
+dist/
+nbdist/
+nb-configuration.xml
+
+# ─── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ─── Docker ───────────────────────────────────────────────────────────────────
+.docker/
+
+# ─── Environment / Secrets ────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+
+# ─── Kafka / Zookeeper local data ─────────────────────────────────────────────
+kafka-logs/
+zookeeper-data/
+
+# ─── Test reports ─────────────────────────────────────────────────────────────
+**/surefire-reports/
+**/failsafe-reports/
