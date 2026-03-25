@@ -1,30 +1,41 @@
 package com.saga.payment.grpc;
 
+import com.saga.payment.entity.Payment;
+import com.saga.payment.service.PaymentService;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.devh.boot.grpc.server.service.GrpcService;
 
+import java.math.BigDecimal;
+import java.util.UUID;
+
 @Slf4j
 @GrpcService
 @RequiredArgsConstructor
 public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBase {
 
-    // TODO: inject PaymentService when implemented
-    // private final PaymentService paymentService;
+    private final PaymentService paymentService;
 
     @Override
     public void processPayment(PaymentRequest request,
                                StreamObserver<PaymentResponse> responseObserver) {
-        log.info("gRPC processPayment called: orderId={}, amount={} {}",
+        log.info("gRPC processPayment: orderId={}, amount={} {}",
                 request.getOrderId(), request.getAmount(), request.getCurrency());
         try {
-            // TODO: delegate to paymentService.process(request)
+            Payment payment = paymentService.processPayment(
+                    null, // sagaId unknown in direct gRPC calls
+                    request.getOrderId(),
+                    request.getUserId(),
+                    BigDecimal.valueOf(request.getAmount()),
+                    request.getCurrency()
+            );
+
             PaymentResponse response = PaymentResponse.newBuilder()
-                    .setPaymentId("mock-payment-id")
-                    .setStatus("SUCCESS")
-                    .setMessage("Payment processed successfully")
+                    .setPaymentId(payment.getId().toString())
+                    .setStatus(payment.getStatus().name())
+                    .setMessage("Payment processed")
                     .build();
 
             responseObserver.onNext(response);
@@ -40,14 +51,19 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
     @Override
     public void cancelPayment(CancelPaymentRequest request,
                               StreamObserver<CancelPaymentResponse> responseObserver) {
-        log.info("gRPC cancelPayment called: paymentId={}, reason={}",
+        log.info("gRPC cancelPayment: paymentId={}, reason={}",
                 request.getPaymentId(), request.getReason());
         try {
-            // TODO: delegate to paymentService.cancel(request)
+            Payment payment = paymentService.cancelPayment(
+                    null, // sagaId unknown in direct gRPC calls
+                    UUID.fromString(request.getPaymentId()),
+                    request.getReason()
+            );
+
             CancelPaymentResponse response = CancelPaymentResponse.newBuilder()
-                    .setPaymentId(request.getPaymentId())
-                    .setStatus("CANCELLED")
-                    .setMessage("Payment cancelled successfully")
+                    .setPaymentId(payment.getId().toString())
+                    .setStatus(payment.getStatus().name())
+                    .setMessage("Payment cancelled")
                     .build();
 
             responseObserver.onNext(response);

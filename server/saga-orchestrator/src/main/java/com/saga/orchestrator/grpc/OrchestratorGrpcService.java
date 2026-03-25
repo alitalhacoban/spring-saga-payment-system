@@ -1,31 +1,42 @@
 package com.saga.orchestrator.grpc;
 
+import com.saga.orchestrator.entity.SagaInstance;
+import com.saga.orchestrator.service.SagaOrchestrationService;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.devh.boot.grpc.server.service.GrpcService;
 
+import java.math.BigDecimal;
+import java.util.UUID;
+
 @Slf4j
 @GrpcService
 @RequiredArgsConstructor
 public class OrchestratorGrpcService extends OrchestratorServiceGrpc.OrchestratorServiceImplBase {
 
-    // TODO: inject SagaOrchestrationService when implemented
-    // private final SagaOrchestrationService orchestrationService;
+    private final SagaOrchestrationService orchestrationService;
 
     @Override
     public void startSaga(StartSagaRequest request,
                           StreamObserver<StartSagaResponse> responseObserver) {
-        log.info("gRPC startSaga called: userId={}, productId={}, quantity={}, amount={} {}",
+        log.info("gRPC startSaga: userId={}, productId={}, quantity={}, amount={} {}",
                 request.getUserId(), request.getProductId(),
                 request.getQuantity(), request.getAmount(), request.getCurrency());
         try {
-            // TODO: delegate to orchestrationService.start(request)
+            SagaInstance saga = orchestrationService.startSaga(
+                    request.getUserId(),
+                    request.getProductId(),
+                    request.getQuantity(),
+                    BigDecimal.valueOf(request.getAmount()),
+                    request.getCurrency()
+            );
+
             StartSagaResponse response = StartSagaResponse.newBuilder()
-                    .setSagaId("mock-saga-id")
-                    .setOrderId("mock-order-id")
-                    .setStatus("STARTED")
+                    .setSagaId(saga.getId().toString())
+                    .setOrderId(saga.getOrderId() != null ? saga.getOrderId() : "")
+                    .setStatus(saga.getStatus().name())
                     .setMessage("Saga started successfully")
                     .build();
 
@@ -42,14 +53,15 @@ public class OrchestratorGrpcService extends OrchestratorServiceGrpc.Orchestrato
     @Override
     public void getSagaStatus(SagaStatusRequest request,
                               StreamObserver<SagaStatusResponse> responseObserver) {
-        log.info("gRPC getSagaStatus called: sagaId={}", request.getSagaId());
+        log.info("gRPC getSagaStatus: sagaId={}", request.getSagaId());
         try {
-            // TODO: delegate to orchestrationService.getStatus(request)
+            SagaInstance saga = orchestrationService.findById(UUID.fromString(request.getSagaId()));
+
             SagaStatusResponse response = SagaStatusResponse.newBuilder()
-                    .setSagaId(request.getSagaId())
-                    .setOrderId("mock-order-id")
-                    .setCurrentStep("ORDER_CREATED")
-                    .setStatus("STARTED")
+                    .setSagaId(saga.getId().toString())
+                    .setOrderId(saga.getOrderId() != null ? saga.getOrderId() : "")
+                    .setCurrentStep(saga.getCurrentStep().name())
+                    .setStatus(saga.getStatus().name())
                     .build();
 
             responseObserver.onNext(response);
