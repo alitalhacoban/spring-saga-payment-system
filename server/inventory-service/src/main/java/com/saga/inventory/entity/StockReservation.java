@@ -11,8 +11,7 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "stock_reservations")
-@Getter
-@Setter
+@Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
