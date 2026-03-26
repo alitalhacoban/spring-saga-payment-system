@@ -14,8 +14,7 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "saga_instances")
-@Getter
-@Setter
+@Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor

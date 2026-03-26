@@ -1,9 +1,10 @@
 package com.saga.shared.event;
 
 import lombok.AllArgsConstructor;
-import lombok.Getter;
+import lombok.Data;
+
 import lombok.NoArgsConstructor;
-import lombok.Setter;
+
 import lombok.experimental.SuperBuilder;
 
 import java.util.UUID;
@@ -12,8 +13,7 @@ import java.util.UUID;
  * Published by inventory-service when stock is successfully reserved.
  * Consumed by saga-orchestrator to proceed to the payment step.
  */
-@Getter
-@Setter
+@Data
 @SuperBuilder
 @NoArgsConstructor
 @AllArgsConstructor
