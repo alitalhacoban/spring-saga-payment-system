@@ -1,0 +1,167 @@
+{
+  "info": {
+    "name": "Saga Pattern Payment System",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "End-to-end test collection for the Saga Pattern Payment System. Start with 'Create Product' to seed inventory, then 'Start Order (Saga)' to trigger the full saga flow."
+  },
+  "variable": [
+    { "key": "orchestrator_url", "value": "http://localhost:8084" },
+    { "key": "order_url",        "value": "http://localhost:8082" },
+    { "key": "payment_url",      "value": "http://localhost:8081" },
+    { "key": "inventory_url",    "value": "http://localhost:8083" },
+    { "key": "saga_id",          "value": "" },
+    { "key": "order_id",         "value": "" },
+    { "key": "payment_id",       "value": "" },
+    { "key": "product_id",       "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. Inventory Service",
+      "item": [
+        {
+          "name": "Create Product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set('product_id', body.id);",
+                  "    pm.test('Product created', () => pm.response.to.have.status(201));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{inventory_url}}/api/products",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Product\",\n  \"quantity\": 100\n}"
+            }
+          }
+        },
+        {
+          "name": "Get All Products",
+          "request": {
+            "method": "GET",
+            "url": "{{inventory_url}}/api/products"
+          }
+        },
+        {
+          "name": "Get Product by ID",
+          "request": {
+            "method": "GET",
+            "url": "{{inventory_url}}/api/products/{{product_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Saga Orchestrator",
+      "item": [
+        {
+          "name": "Start Order (Saga)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set('saga_id', body.sagaId);",
+                  "    pm.collectionVariables.set('order_id', body.orderId);",
+                  "    pm.test('Saga started', () => pm.response.to.have.status(201));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{orchestrator_url}}/api/orders",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"user-123\",\n  \"productId\": \"{{product_id}}\",\n  \"quantity\": 2,\n  \"amount\": \"49.99\",\n  \"currency\": \"USD\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Get Saga Status",
+          "request": {
+            "method": "GET",
+            "url": "{{orchestrator_url}}/api/sagas/{{saga_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Order Service",
+      "item": [
+        {
+          "name": "Get Order by ID",
+          "request": {
+            "method": "GET",
+            "url": "{{order_url}}/api/orders/{{order_id}}"
+          }
+        },
+        {
+          "name": "Get Orders by User",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{order_url}}/api/orders?userId=user-123",
+              "host": ["{{order_url}}"],
+              "path": ["api", "orders"],
+              "query": [{ "key": "userId", "value": "user-123" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Payment Service",
+      "item": [
+        {
+          "name": "Get Payment by ID",
+          "request": {
+            "method": "GET",
+            "url": "{{payment_url}}/api/payments/{{payment_id}}"
+          }
+        },
+        {
+          "name": "Get Payment by Order ID",
+          "request": {
+            "method": "GET",
+            "url": "{{payment_url}}/api/payments/order/{{order_id}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Actuator Health Checks",
+      "item": [
+        {
+          "name": "Orchestrator Health",
+          "request": { "method": "GET", "url": "{{orchestrator_url}}/actuator/health" }
+        },
+        {
+          "name": "Order Service Health",
+          "request": { "method": "GET", "url": "{{order_url}}/actuator/health" }
+        },
+        {
+          "name": "Payment Service Health",
+          "request": { "method": "GET", "url": "{{payment_url}}/actuator/health" }
+        },
+        {
+          "name": "Inventory Service Health",
+          "request": { "method": "GET", "url": "{{inventory_url}}/actuator/health" }
+        }
+      ]
+    }
+  ]
+}
