@@ -2,12 +2,15 @@ package com.saga.orchestrator.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.saga.inventory.grpc.CheckStockResponse;
+import com.saga.inventory.grpc.GetProductResponse;
 import com.saga.order.grpc.CreateOrderResponse;
 import com.saga.orchestrator.entity.SagaInstance;
 import com.saga.orchestrator.entity.SagaStep;
 import com.saga.orchestrator.entity.enums.SagaStatus;
 import com.saga.orchestrator.entity.enums.SagaStepName;
 import com.saga.orchestrator.entity.enums.SagaStepStatus;
+import com.saga.orchestrator.grpc.InventoryServiceClient;
 import com.saga.orchestrator.grpc.OrderServiceClient;
 import com.saga.orchestrator.model.SagaPayload;
 import com.saga.orchestrator.repository.SagaInstanceRepository;
@@ -60,19 +63,34 @@ public class SagaOrchestrationService {
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final ObjectMapper objectMapper;
     private final OrderServiceClient orderServiceClient;
+    private final InventoryServiceClient inventoryServiceClient;
 
     // ─── Saga Start ───────────────────────────────────────────────────────────
 
     /**
-     * Entry point — triggered by gRPC startSaga call.
+     * Entry point — triggered by REST POST /api/orders.
      *
-     * 1. Create order via gRPC (sync)
-     * 2. Persist SagaInstance with full context
-     * 3. Publish StockReserveCommand → inventory-service
+     * 0a. Check stock via gRPC → inventory-service (fast-fail, advisory)
+     * 0b. Get product details via gRPC → inventory-service (name, canonical stock levels)
+     * 1.  Create order via gRPC → order-service (sync)
+     * 2.  Persist SagaInstance with full context
+     * 3.  Publish StockReserveCommand → inventory-service (async, with pessimistic lock)
      */
     @Transactional
     public SagaInstance startSaga(String userId, String productId,
                                   Integer quantity, BigDecimal amount, String currency) {
+
+        // Step 0a: Advisory stock check via gRPC — fail fast before touching order-service
+        CheckStockResponse stockCheck = inventoryServiceClient.checkStock(productId, quantity);
+        if (!stockCheck.getAvailable()) {
+            log.warn("Saga aborted — insufficient stock: productId={}, {}", productId, stockCheck.getMessage());
+            throw new IllegalStateException("Cannot start saga: " + stockCheck.getMessage());
+        }
+
+        // Step 0b: Fetch product info via gRPC — validate product exists, log canonical name
+        GetProductResponse productInfo = inventoryServiceClient.getProduct(productId);
+        log.info("Product validated via gRPC: name='{}', availableQty={}",
+                productInfo.getName(), productInfo.getAvailableQuantity());
 
         // Step 1: Create order synchronously via gRPC
         CreateOrderResponse orderResponse = orderServiceClient.createOrder(

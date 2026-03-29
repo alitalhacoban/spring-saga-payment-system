@@ -1,9 +1,11 @@
 package com.saga.inventory.grpc;
 
+import com.saga.inventory.entity.Product;
 import com.saga.inventory.entity.StockReservation;
 import com.saga.inventory.service.InventoryService;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.devh.boot.grpc.server.service.GrpcService;
@@ -74,6 +76,71 @@ public class InventoryGrpcService extends InventoryServiceGrpc.InventoryServiceI
             responseObserver.onCompleted();
         } catch (Exception e) {
             log.error("releaseStock failed: {}", e.getMessage(), e);
+            responseObserver.onError(
+                    Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException()
+            );
+        }
+    }
+
+    /**
+     * Returns product details including current stock levels.
+     * Called by saga-orchestrator to fetch canonical product info before starting a saga.
+     */
+    @Override
+    public void getProduct(GetProductRequest request,
+                           StreamObserver<GetProductResponse> responseObserver) {
+        log.info("gRPC getProduct: productId={}", request.getProductId());
+        try {
+            Product product = inventoryService.findProductById(UUID.fromString(request.getProductId()));
+            GetProductResponse response = GetProductResponse.newBuilder()
+                    .setProductId(product.getId().toString())
+                    .setName(product.getName())
+                    .setTotalQuantity(product.getQuantity())
+                    .setReservedQuantity(product.getReservedQuantity())
+                    .setAvailableQuantity(product.getAvailableQuantity())
+                    .build();
+            responseObserver.onNext(response);
+            responseObserver.onCompleted();
+        } catch (EntityNotFoundException e) {
+            responseObserver.onError(
+                    Status.NOT_FOUND.withDescription(e.getMessage()).asRuntimeException()
+            );
+        } catch (Exception e) {
+            log.error("getProduct failed: {}", e.getMessage(), e);
+            responseObserver.onError(
+                    Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException()
+            );
+        }
+    }
+
+    /**
+     * Checks whether the requested quantity is available without reserving it.
+     * Called by saga-orchestrator as a fast-fail guard before creating an order.
+     * Note: this is advisory — the actual reservation enforces stock with pessimistic locking.
+     */
+    @Override
+    public void checkStock(CheckStockRequest request,
+                           StreamObserver<CheckStockResponse> responseObserver) {
+        log.info("gRPC checkStock: productId={}, quantity={}", request.getProductId(), request.getQuantity());
+        try {
+            Product product = inventoryService.findProductById(UUID.fromString(request.getProductId()));
+            int available = product.getAvailableQuantity();
+            boolean sufficient = available >= request.getQuantity();
+            CheckStockResponse response = CheckStockResponse.newBuilder()
+                    .setAvailable(sufficient)
+                    .setAvailableQuantity(available)
+                    .setMessage(sufficient
+                            ? "Stock available: " + available + " units"
+                            : "Insufficient stock: requested=" + request.getQuantity() + ", available=" + available)
+                    .build();
+            responseObserver.onNext(response);
+            responseObserver.onCompleted();
+        } catch (EntityNotFoundException e) {
+            responseObserver.onError(
+                    Status.NOT_FOUND.withDescription(e.getMessage()).asRuntimeException()
+            );
+        } catch (Exception e) {
+            log.error("checkStock failed: {}", e.getMessage(), e);
             responseObserver.onError(
                     Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException()
             );

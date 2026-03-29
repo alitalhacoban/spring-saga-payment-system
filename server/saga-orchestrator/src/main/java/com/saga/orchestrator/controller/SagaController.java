@@ -14,6 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Slf4j
@@ -55,6 +56,16 @@ public class SagaController {
                         saga.getStatus().name(),
                         "Saga started. Poll GET /api/sagas/" + saga.getId() + " for status."
                 ));
+    }
+
+    /**
+     * Returns 400 Bad Request when saga cannot be started due to business rule violations
+     * (e.g. insufficient stock detected by gRPC pre-check on inventory-service).
+     */
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<Map<String, String>> handleIllegalState(IllegalStateException ex) {
+        log.warn("Saga start rejected: {}", ex.getMessage());
+        return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
     }
 
     /**

@@ -1,7 +1,9 @@
 package com.saga.payment.service;
 
+import com.saga.order.grpc.GetOrderResponse;
 import com.saga.payment.entity.Payment;
 import com.saga.payment.entity.enums.PaymentStatus;
+import com.saga.payment.grpc.OrderServiceClient;
 import com.saga.payment.repository.PaymentRepository;
 import com.saga.shared.event.PaymentCancelledEvent;
 import com.saga.shared.event.PaymentFailedEvent;
@@ -24,10 +26,21 @@ public class PaymentService {
 
     private final PaymentRepository paymentRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final OrderServiceClient orderServiceClient;
 
     @Transactional
     public Payment processPayment(UUID sagaId, String orderId, String userId,
                                   BigDecimal amount, String currency) {
+        // Validate the order via gRPC before charging — ensures the order is still PENDING
+        GetOrderResponse orderDetails = orderServiceClient.getOrder(orderId);
+        log.info("Order validated via gRPC: orderId={}, status={}, userId={}, totalAmount={}",
+                orderDetails.getOrderId(), orderDetails.getStatus(),
+                orderDetails.getUserId(), orderDetails.getTotalAmount());
+        if (!"PENDING".equals(orderDetails.getStatus())) {
+            throw new IllegalStateException(
+                    "Cannot process payment: order " + orderId + " is not PENDING (status=" + orderDetails.getStatus() + ")");
+        }
+
         Payment payment = Payment.builder()
                 .orderId(orderId)
                 .userId(userId)

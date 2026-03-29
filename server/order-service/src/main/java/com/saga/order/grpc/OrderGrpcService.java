@@ -4,6 +4,7 @@ import com.saga.order.entity.Order;
 import com.saga.order.service.OrderService;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.devh.boot.grpc.server.service.GrpcService;
@@ -70,6 +71,39 @@ public class OrderGrpcService extends OrderServiceGrpc.OrderServiceImplBase {
             responseObserver.onCompleted();
         } catch (Exception e) {
             log.error("updateOrderStatus failed: {}", e.getMessage(), e);
+            responseObserver.onError(
+                    Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException()
+            );
+        }
+    }
+
+    /**
+     * Returns full order details.
+     * Called by payment-service via gRPC to validate the order is PENDING before charging.
+     */
+    @Override
+    public void getOrder(GetOrderRequest request,
+                         StreamObserver<GetOrderResponse> responseObserver) {
+        log.info("gRPC getOrder: orderId={}", request.getOrderId());
+        try {
+            Order order = orderService.findById(UUID.fromString(request.getOrderId()));
+            GetOrderResponse response = GetOrderResponse.newBuilder()
+                    .setOrderId(order.getId().toString())
+                    .setUserId(order.getUserId())
+                    .setProductId(order.getProductId())
+                    .setQuantity(order.getQuantity())
+                    .setPrice(order.getPrice().doubleValue())
+                    .setTotalAmount(order.getTotalAmount().doubleValue())
+                    .setStatus(order.getStatus().name())
+                    .build();
+            responseObserver.onNext(response);
+            responseObserver.onCompleted();
+        } catch (EntityNotFoundException e) {
+            responseObserver.onError(
+                    Status.NOT_FOUND.withDescription(e.getMessage()).asRuntimeException()
+            );
+        } catch (Exception e) {
+            log.error("getOrder failed: {}", e.getMessage(), e);
             responseObserver.onError(
                     Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException()
             );
