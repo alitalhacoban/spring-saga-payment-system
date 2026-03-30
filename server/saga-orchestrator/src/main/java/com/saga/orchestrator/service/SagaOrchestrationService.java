@@ -65,40 +65,26 @@ public class SagaOrchestrationService {
     private final OrderServiceClient orderServiceClient;
     private final InventoryServiceClient inventoryServiceClient;
 
-    // ─── Saga Start ───────────────────────────────────────────────────────────
-
-    /**
-     * Entry point — triggered by REST POST /api/orders.
-     *
-     * 0a. Check stock via gRPC → inventory-service (fast-fail, advisory)
-     * 0b. Get product details via gRPC → inventory-service (name, canonical stock levels)
-     * 1.  Create order via gRPC → order-service (sync)
-     * 2.  Persist SagaInstance with full context
-     * 3.  Publish StockReserveCommand → inventory-service (async, with pessimistic lock)
-     */
     @Transactional
     public SagaInstance startSaga(String userId, String productId,
                                   Integer quantity, BigDecimal amount, String currency) {
 
-        // Step 0a: Advisory stock check via gRPC — fail fast before touching order-service
+        // Advisory stock check via gRPC — fail fast before touching order-service
         CheckStockResponse stockCheck = inventoryServiceClient.checkStock(productId, quantity);
         if (!stockCheck.getAvailable()) {
             log.warn("Saga aborted — insufficient stock: productId={}, {}", productId, stockCheck.getMessage());
             throw new IllegalStateException("Cannot start saga: " + stockCheck.getMessage());
         }
 
-        // Step 0b: Fetch product info via gRPC — validate product exists, log canonical name
         GetProductResponse productInfo = inventoryServiceClient.getProduct(productId);
         log.info("Product validated via gRPC: name='{}', availableQty={}",
                 productInfo.getName(), productInfo.getAvailableQuantity());
 
-        // Step 1: Create order synchronously via gRPC
         CreateOrderResponse orderResponse = orderServiceClient.createOrder(
                 userId, productId, quantity, amount);
         UUID orderId = UUID.fromString(orderResponse.getOrderId());
         log.info("Order created via gRPC: orderId={}", orderId);
 
-        // Step 2: Persist SagaInstance
         SagaPayload payload = SagaPayload.builder()
                 .userId(userId)
                 .productId(productId)
@@ -119,17 +105,11 @@ public class SagaOrchestrationService {
         recordStep(saga, SagaStepName.ORDER_CREATED, SagaStepStatus.COMPLETED, null);
         log.info("Saga started: id={}, orderId={}", saga.getId(), orderId);
 
-        // Step 3: Publish stock reserve command
         publishStockReserveCommand(saga.getId(), payload);
 
         return saga;
     }
 
-    // ─── Forward Flow ─────────────────────────────────────────────────────────
-
-    /**
-     * Stock reserved → trigger payment processing.
-     */
     @Transactional
     public void processStockReserved(StockReservedEvent event) {
         SagaInstance saga = findBySagaId(event.getSagaId());
@@ -145,9 +125,6 @@ public class SagaOrchestrationService {
         publishPaymentProcessCommand(saga.getId(), payload);
     }
 
-    /**
-     * Payment processed → confirm order, saga COMPLETED.
-     */
     @Transactional
     public void processPaymentProcessed(PaymentProcessedEvent event) {
         SagaInstance saga = findBySagaId(event.getSagaId());
@@ -172,11 +149,6 @@ public class SagaOrchestrationService {
         kafkaTemplate.send(KafkaTopics.ORDER_CONFIRMED, payload.getOrderId().toString(), confirmed);
     }
 
-    // ─── Compensation ─────────────────────────────────────────────────────────
-
-    /**
-     * Stock reservation failed → cancel order immediately (nothing to roll back yet).
-     */
     @Transactional
     public void processStockReservationFailed(StockReservationFailedEvent event) {
         SagaInstance saga = findBySagaId(event.getSagaId());
@@ -190,9 +162,6 @@ public class SagaOrchestrationService {
         publishOrderCancelledAndFail(saga, payload.getOrderId(), event.getReason());
     }
 
-    /**
-     * Payment failed → release stock (compensation step 1).
-     */
     @Transactional
     public void processPaymentFailed(PaymentFailedEvent event) {
         SagaInstance saga = findBySagaId(event.getSagaId());
@@ -218,9 +187,6 @@ public class SagaOrchestrationService {
                 payload.getOrderId().toString(), cmd);
     }
 
-    /**
-     * Stock released → cancel order (compensation step 2).
-     */
     @Transactional
     public void processStockReleased(StockReleasedEvent event) {
         SagaInstance saga = findBySagaId(event.getSagaId());
@@ -233,9 +199,6 @@ public class SagaOrchestrationService {
         publishOrderCancelledAndFail(saga, payload.getOrderId(), "Payment failed");
     }
 
-    /**
-     * Payment cancelled → release stock (compensation).
-     */
     @Transactional
     public void processPaymentCancelled(PaymentCancelledEvent event) {
         SagaInstance saga = findBySagaId(event.getSagaId());
@@ -257,8 +220,6 @@ public class SagaOrchestrationService {
                 payload.getOrderId().toString(), cmd);
     }
 
-    // ─── Queries ──────────────────────────────────────────────────────────────
-
     @Transactional(readOnly = true)
     public SagaInstance findById(UUID sagaId) {
         return sagaInstanceRepository.findById(sagaId)
@@ -269,8 +230,6 @@ public class SagaOrchestrationService {
     public List<SagaStep> findStepsBySagaId(UUID sagaId) {
         return sagaStepRepository.findBySagaInstanceIdOrderByCreatedAtAsc(sagaId);
     }
-
-    // ─── Private Helpers ──────────────────────────────────────────────────────
 
     private void publishStockReserveCommand(UUID sagaId, SagaPayload payload) {
         StockReserveCommand cmd = StockReserveCommand.builder()

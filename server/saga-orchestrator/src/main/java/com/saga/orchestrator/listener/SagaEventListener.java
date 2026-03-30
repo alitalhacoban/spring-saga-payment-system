@@ -8,27 +8,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
-/**
- * Listens to reply events from all services and drives the saga state machine.
- *
- * Forward:
- *   stock.reserved           → processStockReserved
- *   payment.processed        → processPaymentProcessed
- *
- * Compensation:
- *   stock.reservation.failed → processStockReservationFailed
- *   payment.failed           → processPaymentFailed
- *   stock.released           → processStockReleased
- *   payment.cancelled        → processPaymentCancelled
- */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class SagaEventListener {
 
     private final SagaOrchestrationService orchestrationService;
-
-    // ─── Forward Flow ─────────────────────────────────────────────────────────
 
     @KafkaListener(topics = KafkaTopics.STOCK_RESERVED,
                    groupId = "${spring.kafka.consumer.group-id}")
@@ -45,8 +30,6 @@ public class SagaEventListener {
                 event.getSagaId(), event.getPaymentId());
         orchestrationService.processPaymentProcessed(event);
     }
-
-    // ─── Compensation ─────────────────────────────────────────────────────────
 
     @KafkaListener(topics = KafkaTopics.STOCK_RESERVATION_FAILED,
                    groupId = "${spring.kafka.consumer.group-id}")

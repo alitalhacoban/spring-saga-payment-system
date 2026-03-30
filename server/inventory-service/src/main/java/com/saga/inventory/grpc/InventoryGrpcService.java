@@ -82,10 +82,6 @@ public class InventoryGrpcService extends InventoryServiceGrpc.InventoryServiceI
         }
     }
 
-    /**
-     * Returns product details including current stock levels.
-     * Called by saga-orchestrator to fetch canonical product info before starting a saga.
-     */
     @Override
     public void getProduct(GetProductRequest request,
                            StreamObserver<GetProductResponse> responseObserver) {
@@ -113,11 +109,6 @@ public class InventoryGrpcService extends InventoryServiceGrpc.InventoryServiceI
         }
     }
 
-    /**
-     * Checks whether the requested quantity is available without reserving it.
-     * Called by saga-orchestrator as a fast-fail guard before creating an order.
-     * Note: this is advisory — the actual reservation enforces stock with pessimistic locking.
-     */
     @Override
     public void checkStock(CheckStockRequest request,
                            StreamObserver<CheckStockResponse> responseObserver) {

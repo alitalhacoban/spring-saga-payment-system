@@ -1,27 +1,6 @@
 package com.saga.shared.kafka;
 
-/**
- * Central registry of all Kafka topic names used across Saga services.
- *
- * Naming convention:  {domain}.{event}
- *
- * Flow:
- *   order-service  ──► order.created          ──► saga-orchestrator
- *   orchestrator   ──► stock.reserve.request  ──► inventory-service
- *   inventory      ──► stock.reserved         ──► saga-orchestrator
- *   inventory      ──► stock.reservation.failed ► saga-orchestrator
- *   orchestrator   ──► payment.process.request ──► payment-service
- *   payment        ──► payment.processed       ──► saga-orchestrator
- *   payment        ──► payment.failed          ──► saga-orchestrator
- *   orchestrator   ──► order.confirmed         ──► order-service
- *
- * Compensation flow:
- *   orchestrator   ──► stock.release.request  ──► inventory-service
- *   inventory      ──► stock.released         ──► saga-orchestrator
- *   orchestrator   ──► payment.cancel.request ──► payment-service
- *   payment        ──► payment.cancelled      ──► saga-orchestrator
- *   orchestrator   ──► order.cancelled        ──► order-service
- */
+// Topic name convention: {domain}.{event}
 public final class KafkaTopics {
 
     private KafkaTopics() {}

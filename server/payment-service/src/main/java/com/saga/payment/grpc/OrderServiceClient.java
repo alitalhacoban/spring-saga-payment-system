@@ -7,11 +7,6 @@ import lombok.extern.slf4j.Slf4j;
 import net.devh.boot.grpc.client.inject.GrpcClient;
 import org.springframework.stereotype.Component;
 
-/**
- * Wraps the gRPC blocking stub for order-service.
- * Used by PaymentService to validate the order is still PENDING
- * before attempting to charge the customer.
- */
 @Slf4j
 @Component
 public class OrderServiceClient {

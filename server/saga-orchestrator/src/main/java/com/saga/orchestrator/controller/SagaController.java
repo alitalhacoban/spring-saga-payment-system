@@ -24,16 +24,6 @@ public class SagaController {
 
     private final SagaOrchestrationService orchestrationService;
 
-    /**
-     * POST /api/orders
-     *
-     * Triggers a new saga. Internally:
-     *   1. Creates the order via gRPC → order-service
-     *   2. Publishes StockReserveCommand → inventory-service
-     *   3. Kafka drives the rest asynchronously
-     *
-     * Returns the sagaId which can be polled via GET /api/sagas/{sagaId}
-     */
     @PostMapping("/api/orders")
     public ResponseEntity<StartOrderResponse> startOrder(@Valid @RequestBody StartOrderRequest request) {
         log.info("POST /api/orders: userId={}, productId={}, qty={}, amount={} {}",
@@ -58,22 +48,13 @@ public class SagaController {
                 ));
     }
 
-    /**
-     * Returns 400 Bad Request when saga cannot be started due to business rule violations
-     * (e.g. insufficient stock detected by gRPC pre-check on inventory-service).
-     */
+    // Maps business rule violations (e.g. insufficient stock) to 400 instead of 500
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<Map<String, String>> handleIllegalState(IllegalStateException ex) {
         log.warn("Saga start rejected: {}", ex.getMessage());
         return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
     }
 
-    /**
-     * GET /api/sagas/{sagaId}
-     *
-     * Returns the current state of a saga including all recorded steps.
-     * Useful for polling after POST /api/orders.
-     */
     @GetMapping("/api/sagas/{sagaId}")
     public ResponseEntity<SagaStatusResponse> getSagaStatus(@PathVariable UUID sagaId) {
         log.info("GET /api/sagas/{}", sagaId);

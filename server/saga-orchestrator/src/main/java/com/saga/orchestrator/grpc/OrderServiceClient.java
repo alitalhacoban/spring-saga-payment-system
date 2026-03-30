@@ -9,11 +9,6 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 
-/**
- * Wraps the gRPC blocking stub for order-service.
- * Used by SagaOrchestrationService to synchronously create an order
- * as the very first step of the saga.
- */
 @Slf4j
 @Component
 public class OrderServiceClient {

@@ -77,10 +77,6 @@ public class OrderGrpcService extends OrderServiceGrpc.OrderServiceImplBase {
         }
     }
 
-    /**
-     * Returns full order details.
-     * Called by payment-service via gRPC to validate the order is PENDING before charging.
-     */
     @Override
     public void getOrder(GetOrderRequest request,
                          StreamObserver<GetOrderResponse> responseObserver) {

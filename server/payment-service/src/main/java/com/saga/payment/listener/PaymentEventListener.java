@@ -9,12 +9,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
-/**
- * Listens to payment commands from saga-orchestrator.
- *
- *   payment.process.request → processPayment  (forward)
- *   payment.cancel.request  → cancelPayment   (compensation)
- */
 @Slf4j
 @Component
 @RequiredArgsConstructor
