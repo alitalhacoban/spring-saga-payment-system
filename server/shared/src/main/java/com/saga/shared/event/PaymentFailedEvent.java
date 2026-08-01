@@ -22,6 +22,6 @@ public class PaymentFailedEvent extends BaseEvent {
 
     private UUID orderId;
     private UUID paymentId;
-    private BigDecimal amount;
+    private BigDecimal totalAmount;
     private String reason;
 }

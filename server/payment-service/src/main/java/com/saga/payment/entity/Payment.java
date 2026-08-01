@@ -30,7 +30,7 @@ public class Payment {
     private String userId;
 
     @Column(name = "amount", nullable = false, precision = 19, scale = 2)
-    private BigDecimal amount;
+    private BigDecimal totalAmount;
 
     @Column(name = "currency", nullable = false, length = 10)
     @Builder.Default

@@ -19,13 +19,13 @@ public class PaymentEventListener {
     @KafkaListener(topics = KafkaTopics.PAYMENT_PROCESS_REQUEST,
                    groupId = "${spring.kafka.consumer.group-id}")
     public void onPaymentProcessRequest(PaymentProcessCommand cmd) {
-        log.info("← payment.process.request: sagaId={}, orderId={}, amount={} {}",
-                cmd.getSagaId(), cmd.getOrderId(), cmd.getAmount(), cmd.getCurrency());
+        log.info("← payment.process.request: sagaId={}, orderId={}, totalAmount={} {}",
+                cmd.getSagaId(), cmd.getOrderId(), cmd.getTotalAmount(), cmd.getCurrency());
         paymentService.processPayment(
                 cmd.getSagaId(),
                 cmd.getOrderId().toString(),
                 cmd.getUserId(),
-                cmd.getAmount(),
+                cmd.getTotalAmount(),
                 cmd.getCurrency(),
                 cmd.getIdempotencyKey()
         );

@@ -55,6 +55,8 @@ class OrderServiceTest {
 
         assertThat(result.getIdempotencyKey()).isEqualTo(idempotencyKey);
         assertThat(result.getStatus()).isEqualTo(OrderStatus.PENDING);
+        assertThat(result.getUnitPrice()).isEqualByComparingTo("10.00");
+        assertThat(result.getTotalAmount()).isEqualByComparingTo("20.00");
         verify(orderRepository).save(any(Order.class));
         verify(outboxEventRepository).save(any());
     }
@@ -82,7 +84,7 @@ class OrderServiceTest {
                 .userId("user-1")
                 .productId("product-1")
                 .quantity(2)
-                .price(BigDecimal.TEN)
+                .unitPrice(BigDecimal.TEN)
                 .totalAmount(BigDecimal.valueOf(20))
                 .status(OrderStatus.PENDING)
                 .idempotencyKey(idempotencyKey)
@@ -104,7 +106,7 @@ class OrderServiceTest {
                 .userId("user-1")
                 .productId("product-1")
                 .quantity(2)
-                .price(BigDecimal.TEN)
+                .unitPrice(BigDecimal.TEN)
                 .totalAmount(BigDecimal.valueOf(20))
                 .status(OrderStatus.PENDING)
                 .idempotencyKey(idempotencyKey)

@@ -21,14 +21,14 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
     @Override
     public void processPayment(PaymentRequest request,
                                StreamObserver<PaymentResponse> responseObserver) {
-        log.info("gRPC processPayment: orderId={}, amount={} {}",
-                request.getOrderId(), request.getAmount(), request.getCurrency());
+        log.info("gRPC processPayment: orderId={}, totalAmount={} {}",
+                request.getOrderId(), request.getTotalAmount(), request.getCurrency());
         try {
             Payment payment = paymentService.processPayment(
                     null, // sagaId unknown in direct gRPC calls
                     request.getOrderId(),
                     request.getUserId(),
-                    BigDecimal.valueOf(request.getAmount()),
+                    BigDecimal.valueOf(request.getTotalAmount()),
                     request.getCurrency(),
                     null // no idempotency key on the direct gRPC path
             );

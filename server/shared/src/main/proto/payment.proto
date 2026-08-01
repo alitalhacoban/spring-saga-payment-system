@@ -15,7 +15,7 @@ service PaymentService {
 message PaymentRequest {
   string order_id  = 1;
   string user_id   = 2;
-  double amount    = 3;
+  double total_amount = 3;
   string currency  = 4;
 }
 

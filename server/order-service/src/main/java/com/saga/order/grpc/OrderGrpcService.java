@@ -22,9 +22,9 @@ public class OrderGrpcService extends OrderServiceGrpc.OrderServiceImplBase {
     @Override
     public void createOrder(CreateOrderRequest request,
                             StreamObserver<CreateOrderResponse> responseObserver) {
-        log.info("gRPC createOrder: userId={}, productId={}, quantity={}, price={}",
+        log.info("gRPC createOrder: userId={}, productId={}, quantity={}, unitPrice={}",
                 request.getUserId(), request.getProductId(),
-                request.getQuantity(), request.getPrice());
+                request.getQuantity(), request.getUnitPrice());
         try {
             String idempotencyKey = request.getIdempotencyKey().isEmpty()
                     ? null : request.getIdempotencyKey();
@@ -32,7 +32,7 @@ public class OrderGrpcService extends OrderServiceGrpc.OrderServiceImplBase {
                     request.getUserId(),
                     request.getProductId(),
                     request.getQuantity(),
-                    BigDecimal.valueOf(request.getPrice()),
+                    BigDecimal.valueOf(request.getUnitPrice()),
                     idempotencyKey
             );
 
@@ -40,6 +40,7 @@ public class OrderGrpcService extends OrderServiceGrpc.OrderServiceImplBase {
                     .setOrderId(order.getId().toString())
                     .setStatus(order.getStatus().name())
                     .setMessage("Order created successfully")
+                    .setTotalAmount(order.getTotalAmount().doubleValue())
                     .build();
 
             responseObserver.onNext(response);
@@ -91,7 +92,7 @@ public class OrderGrpcService extends OrderServiceGrpc.OrderServiceImplBase {
                     .setUserId(order.getUserId())
                     .setProductId(order.getProductId())
                     .setQuantity(order.getQuantity())
-                    .setPrice(order.getPrice().doubleValue())
+                    .setUnitPrice(order.getUnitPrice().doubleValue())
                     .setTotalAmount(order.getTotalAmount().doubleValue())
                     .setStatus(order.getStatus().name())
                     .build();

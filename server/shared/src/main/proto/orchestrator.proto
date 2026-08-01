@@ -16,7 +16,7 @@ message StartSagaRequest {
   string user_id    = 1;
   string product_id = 2;
   int32  quantity   = 3;
-  double amount     = 4;
+  double unit_price = 4;
   string currency   = 5;
   string idempotency_key = 6;  // optional; empty string = not supplied
 }

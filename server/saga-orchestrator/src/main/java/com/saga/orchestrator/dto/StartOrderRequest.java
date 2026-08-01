@@ -18,8 +18,8 @@ public record StartOrderRequest(
         @NotNull @Min(value = 1, message = "quantity must be at least 1")
         Integer quantity,
 
-        @NotNull @DecimalMin(value = "0.01", message = "amount must be positive")
-        BigDecimal amount,
+        @NotNull @DecimalMin(value = "0.01", message = "unitPrice must be positive")
+        BigDecimal unitPrice,
 
         @NotBlank(message = "currency is required")
         String currency

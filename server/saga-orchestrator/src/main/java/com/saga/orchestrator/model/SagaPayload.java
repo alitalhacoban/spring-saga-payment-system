@@ -22,7 +22,8 @@ public class SagaPayload {
     private String userId;
     private String productId;
     private Integer quantity;
-    private BigDecimal amount;
+    private BigDecimal unitPrice;
+    private BigDecimal totalAmount;
     private String currency;
 
     // Populated as saga progresses

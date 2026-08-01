@@ -22,6 +22,6 @@ public class PaymentProcessCommand extends BaseEvent {
 
     private UUID orderId;
     private String userId;
-    private BigDecimal amount;
+    private BigDecimal totalAmount;
     private String currency;
 }

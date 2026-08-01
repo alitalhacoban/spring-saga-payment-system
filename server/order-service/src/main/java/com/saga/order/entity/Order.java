@@ -33,7 +33,7 @@ public class Order {
     private Integer quantity;
 
     @Column(name = "price", nullable = false, precision = 19, scale = 2)
-    private BigDecimal price;
+    private BigDecimal unitPrice;
 
     @Column(name = "total_amount", nullable = false, precision = 19, scale = 2)
     private BigDecimal totalAmount;

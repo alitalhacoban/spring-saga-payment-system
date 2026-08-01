@@ -24,6 +24,6 @@ public class OrderCreatedEvent extends BaseEvent {
     private String userId;
     private String productId;
     private Integer quantity;
-    private BigDecimal price;
+    private BigDecimal unitPrice;
     private BigDecimal totalAmount;
 }

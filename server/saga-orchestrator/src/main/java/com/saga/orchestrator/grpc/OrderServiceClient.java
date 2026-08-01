@@ -29,14 +29,14 @@ public class OrderServiceClient {
     @Retryable(exceptionExpression = RETRYABLE_GRPC_STATUS,
                maxAttempts = 3, backoff = @Backoff(delay = 200, multiplier = 2))
     public CreateOrderResponse createOrder(String userId, String productId,
-                                           Integer quantity, BigDecimal price, String idempotencyKey) {
+                                           Integer quantity, BigDecimal unitPrice, String idempotencyKey) {
         log.info("gRPC → order-service.createOrder: userId={}, productId={}", userId, productId);
         return orderServiceStub.createOrder(
                 CreateOrderRequest.newBuilder()
                         .setUserId(userId)
                         .setProductId(productId)
                         .setQuantity(quantity)
-                        .setPrice(price.doubleValue())
+                        .setUnitPrice(unitPrice.doubleValue())
                         .setIdempotencyKey(idempotencyKey != null ? idempotencyKey : "")
                         .build()
         );

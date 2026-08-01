@@ -37,7 +37,7 @@ public class PaymentService {
 
     @Transactional
     public Payment processPayment(UUID sagaId, String orderId, String userId,
-                                  BigDecimal amount, String currency, String idempotencyKey) {
+                                  BigDecimal totalAmount, String currency, String idempotencyKey) {
         if (idempotencyKey != null) {
             var existing = paymentRepository.findByIdempotencyKey(idempotencyKey);
             if (existing.isPresent()) {
@@ -56,11 +56,12 @@ public class PaymentService {
             throw new IllegalStateException(
                     "Cannot process payment: order " + orderId + " is not PENDING (status=" + orderDetails.getStatus() + ")");
         }
+        BigDecimal orderTotalAmount = BigDecimal.valueOf(orderDetails.getTotalAmount());
 
         Payment payment = Payment.builder()
                 .orderId(orderId)
                 .userId(userId)
-                .amount(amount)
+                .totalAmount(totalAmount)
                 .currency(currency)
                 .status(PaymentStatus.PENDING)
                 .idempotencyKey(idempotencyKey)
@@ -74,10 +75,18 @@ public class PaymentService {
                     idempotencyKey, raced.getId());
             return raced;
         }
-        log.info("Payment initiated: id={}, orderId={}, amount={} {}", payment.getId(), orderId, amount, currency);
+        log.info("Payment initiated: id={}, orderId={}, totalAmount={} {}",
+                payment.getId(), orderId, totalAmount, currency);
+
+        if (totalAmount.compareTo(orderTotalAmount) != 0) {
+            String reason = "Payment total does not match order total: requested="
+                    + totalAmount + ", orderTotal=" + orderTotalAmount;
+            log.warn("Payment rejected: id={}, orderId={}, reason={}", payment.getId(), orderId, reason);
+            return failPayment(payment, sagaId, reason);
+        }
 
         // TODO: integrate with real payment gateway
-        boolean success = isPaymentApproved(amount);
+        boolean success = isPaymentApproved(totalAmount);
 
         if (success) {
             payment.setStatus(PaymentStatus.SUCCESS);
@@ -89,29 +98,14 @@ public class PaymentService {
                     .sagaId(sagaId)
                     .orderId(UUID.fromString(orderId))
                     .paymentId(payment.getId())
-                    .amount(amount)
+                    .totalAmount(totalAmount)
                     .currency(currency)
                     .build();
             event.init();
             outboxEventRepository.save(toOutboxEvent("Payment", payment.getId().toString(),
                     KafkaTopics.PAYMENT_PROCESSED, orderId, event));
         } else {
-            payment.setStatus(PaymentStatus.FAILED);
-            payment.setFailureReason("Payment declined by gateway");
-            payment = paymentRepository.save(payment);
-            log.warn("Payment failed: id={}", payment.getId());
-
-            PaymentFailedEvent event = PaymentFailedEvent.builder()
-                    .eventId(UUID.randomUUID())
-                    .sagaId(sagaId)
-                    .orderId(UUID.fromString(orderId))
-                    .paymentId(payment.getId())
-                    .amount(amount)
-                    .reason("Payment declined by gateway")
-                    .build();
-            event.init();
-            outboxEventRepository.save(toOutboxEvent("Payment", payment.getId().toString(),
-                    KafkaTopics.PAYMENT_FAILED, orderId, event));
+            payment = failPayment(payment, sagaId, "Payment declined by gateway");
         }
         return payment;
     }
@@ -150,8 +144,28 @@ public class PaymentService {
     }
 
     // Simulates payment gateway approval logic
-    private boolean isPaymentApproved(BigDecimal amount) {
-        return amount.compareTo(BigDecimal.valueOf(10_000)) < 0;
+    private boolean isPaymentApproved(BigDecimal totalAmount) {
+        return totalAmount.compareTo(BigDecimal.valueOf(10_000)) < 0;
+    }
+
+    private Payment failPayment(Payment payment, UUID sagaId, String reason) {
+        payment.setStatus(PaymentStatus.FAILED);
+        payment.setFailureReason(reason);
+        payment = paymentRepository.save(payment);
+        log.warn("Payment failed: id={}, reason={}", payment.getId(), reason);
+
+        PaymentFailedEvent event = PaymentFailedEvent.builder()
+                .eventId(UUID.randomUUID())
+                .sagaId(sagaId)
+                .orderId(UUID.fromString(payment.getOrderId()))
+                .paymentId(payment.getId())
+                .totalAmount(payment.getTotalAmount())
+                .reason(reason)
+                .build();
+        event.init();
+        outboxEventRepository.save(toOutboxEvent("Payment", payment.getId().toString(),
+                KafkaTopics.PAYMENT_FAILED, payment.getOrderId(), event));
+        return payment;
     }
 
     private OutboxEvent toOutboxEvent(String aggregateType, String aggregateId,

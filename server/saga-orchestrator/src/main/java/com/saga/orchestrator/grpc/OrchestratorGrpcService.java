@@ -21,9 +21,9 @@ public class OrchestratorGrpcService extends OrchestratorServiceGrpc.Orchestrato
     @Override
     public void startSaga(StartSagaRequest request,
                           StreamObserver<StartSagaResponse> responseObserver) {
-        log.info("gRPC startSaga: userId={}, productId={}, quantity={}, amount={} {}",
+        log.info("gRPC startSaga: userId={}, productId={}, quantity={}, unitPrice={} {}",
                 request.getUserId(), request.getProductId(),
-                request.getQuantity(), request.getAmount(), request.getCurrency());
+                request.getQuantity(), request.getUnitPrice(), request.getCurrency());
         try {
             String idempotencyKey = request.getIdempotencyKey().isEmpty()
                     ? null : request.getIdempotencyKey();
@@ -33,7 +33,7 @@ public class OrchestratorGrpcService extends OrchestratorServiceGrpc.Orchestrato
                     request.getUserId(),
                     request.getProductId(),
                     request.getQuantity(),
-                    BigDecimal.valueOf(request.getAmount()),
+                    BigDecimal.valueOf(request.getUnitPrice()),
                     request.getCurrency(),
                     idempotencyKey
             );

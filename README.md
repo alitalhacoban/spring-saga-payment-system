@@ -263,6 +263,9 @@ Import it into Postman to quickly try out every request — creating products, p
 
 ## 📝 Notes
 
+> **Amount contract:** Order requests accept `unitPrice`. The order service calculates
+> `totalAmount = unitPrice × quantity`, and that canonical total is charged by the payment service.
+
 > **Payment simulation:** Payments with a total amount >= 10,000 are automatically rejected to trigger the compensation path.
 
 > **Concurrency:** The inventory service uses pessimistic locking to prevent concurrent over-reservation.

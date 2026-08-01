@@ -2,7 +2,7 @@
   "info": {
     "name": "Saga Pattern Payment System",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "End-to-end test collection for the Saga Pattern Payment System.\n\nFlow:\n  1. Create a product (seeds inventory)\n  2. Run 'Start Order (Saga)' to trigger the happy-path saga\n  3. Poll 'Get Saga Status' until COMPLETED\n  4. Use the scenario folders to explore failure and compensation flows\n\nInter-service gRPC calls triggered internally:\n  • POST /api/orders → orchestrator calls inventory-service.checkStock (fast-fail)\n  • POST /api/orders → orchestrator calls inventory-service.getProduct (price enrichment)\n  • Payment processing → payment-service calls order-service.getOrder (PENDING validation)"
+    "description": "End-to-end test collection for the Saga Pattern Payment System.\n\nFlow:\n  1. Create a product (seeds inventory)\n  2. Run 'Start Order (Saga)' to trigger the happy-path saga\n  3. Poll 'Get Saga Status' until COMPLETED\n  4. Use the scenario folders to explore failure and compensation flows\n\nInter-service gRPC calls triggered internally:\n  • POST /api/orders → orchestrator calls inventory-service.checkStock (fast-fail)\n  • POST /api/orders → orchestrator calls inventory-service.getProduct (product validation)\n  • Payment processing → payment-service calls order-service.getOrder (status and total validation)"
   },
   "variable": [
     { "key": "orchestrator_url", "value": "http://localhost:8084" },
@@ -109,7 +109,7 @@
             "url": "{{orchestrator_url}}/api/orders",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"userId\": \"user-123\",\n  \"productId\": \"{{product_id}}\",\n  \"quantity\": 2,\n  \"amount\": \"49.99\",\n  \"currency\": \"USD\"\n}"
+              "raw": "{\n  \"userId\": \"user-123\",\n  \"productId\": \"{{product_id}}\",\n  \"quantity\": 2,\n  \"unitPrice\": \"49.99\",\n  \"currency\": \"USD\"\n}"
             },
             "description": "Triggers the full saga. Internally the orchestrator:\n  1. Calls inventory-service.checkStock (gRPC) — fast-fail if stock < quantity\n  2. Calls inventory-service.getProduct (gRPC) — validates product, logs canonical name\n  3. Calls order-service.createOrder (gRPC) — creates the order synchronously\n  4. Publishes StockReserveCommand → Kafka → inventory-service\n  5. Kafka drives the rest: stock reserve → payment (payment-service calls order-service.getOrder via gRPC) → confirm"
           }
@@ -260,7 +260,7 @@
             "url": "{{orchestrator_url}}/api/orders",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"userId\": \"user-456\",\n  \"productId\": \"{{low_stock_product_id}}\",\n  \"quantity\": 50,\n  \"amount\": \"4999.50\",\n  \"currency\": \"USD\"\n}"
+              "raw": "{\n  \"userId\": \"user-456\",\n  \"productId\": \"{{low_stock_product_id}}\",\n  \"quantity\": 50,\n  \"unitPrice\": \"99.99\",\n  \"currency\": \"USD\"\n}"
             },
             "description": "Expects 400 Bad Request. Orchestrator calls inventory-service.checkStock (gRPC) before creating any order. Since requested qty (50) > available (3), the saga is rejected immediately — no order is created, no Kafka messages are published."
           }
@@ -314,7 +314,7 @@
                   "    pm.test('Status is STARTED', () => pm.expect(body.status).to.eql('STARTED'));",
                   "    console.log('Compensation saga started: sagaId=' + body.sagaId);",
                   "    console.log('Note: payment-service will call order-service.getOrder (gRPC) before charging');",
-                  "    console.log('Payment will be declined (amount >= 10000). Watch compensation flow.');",
+                  "    console.log('Payment will be declined (totalAmount >= 10000). Watch compensation flow.');",
                   "}"
                 ]
               }
@@ -326,7 +326,7 @@
             "url": "{{orchestrator_url}}/api/orders",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"userId\": \"user-789\",\n  \"productId\": \"{{product_id}}\",\n  \"quantity\": 1,\n  \"amount\": \"15000.00\",\n  \"currency\": \"USD\"\n}"
+              "raw": "{\n  \"userId\": \"user-789\",\n  \"productId\": \"{{product_id}}\",\n  \"quantity\": 1,\n  \"unitPrice\": \"15000.00\",\n  \"currency\": \"USD\"\n}"
             },
             "description": "Amount >= 10000 is rejected by the simulated payment gateway. This triggers the full compensation flow:\n  1. checkStock (gRPC) → passes\n  2. getProduct (gRPC) → passes\n  3. createOrder (gRPC) → PENDING order created\n  4. StockReserveCommand (Kafka) → inventory reserves stock\n  5. payment-service calls order-service.getOrder (gRPC) → validates PENDING\n  6. Payment gateway rejects → PaymentFailedEvent\n  7. Orchestrator publishes StockReleaseCommand\n  8. Inventory releases stock → StockReleasedEvent\n  9. Order status → CANCELLED, Saga status → FAILED"
           }

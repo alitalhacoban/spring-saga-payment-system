@@ -17,7 +17,7 @@ message CreateOrderRequest {
   string user_id    = 1;
   string product_id = 2;
   int32  quantity   = 3;
-  double price      = 4;
+  double unit_price = 4;
   string idempotency_key = 5;  // optional; empty string = not supplied
 }
 
@@ -25,6 +25,7 @@ message CreateOrderResponse {
   string order_id = 1;
   string status   = 2;  // PENDING | CONFIRMED | FAILED
   string message  = 3;
+  double total_amount = 4;
 }
 
 message UpdateOrderStatusRequest {
@@ -47,7 +48,7 @@ message GetOrderResponse {
   string user_id       = 2;
   string product_id    = 3;
   int32  quantity      = 4;
-  double price         = 5;
+  double unit_price    = 5;
   double total_amount  = 6;
   string status        = 7;
 }

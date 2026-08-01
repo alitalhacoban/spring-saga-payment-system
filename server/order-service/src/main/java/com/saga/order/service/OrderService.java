@@ -32,7 +32,7 @@ public class OrderService {
     private final ObjectMapper objectMapper;
 
     @Transactional
-    public Order createOrder(String userId, String productId, Integer quantity, BigDecimal price,
+    public Order createOrder(String userId, String productId, Integer quantity, BigDecimal unitPrice,
                              String idempotencyKey) {
         if (idempotencyKey != null) {
             var existing = orderRepository.findByIdempotencyKey(idempotencyKey);
@@ -43,13 +43,13 @@ public class OrderService {
             }
         }
 
-        BigDecimal totalAmount = price.multiply(BigDecimal.valueOf(quantity));
+        BigDecimal totalAmount = unitPrice.multiply(BigDecimal.valueOf(quantity));
 
         Order order = Order.builder()
                 .userId(userId)
                 .productId(productId)
                 .quantity(quantity)
-                .price(price)
+                .unitPrice(unitPrice)
                 .totalAmount(totalAmount)
                 .status(OrderStatus.PENDING)
                 .idempotencyKey(idempotencyKey)
@@ -72,7 +72,7 @@ public class OrderService {
                 .userId(userId)
                 .productId(productId)
                 .quantity(quantity)
-                .price(price)
+                .unitPrice(unitPrice)
                 .totalAmount(totalAmount)
                 .build();
         event.init();

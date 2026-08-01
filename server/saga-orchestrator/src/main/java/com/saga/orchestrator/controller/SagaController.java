@@ -28,9 +28,9 @@ public class SagaController {
     public ResponseEntity<StartOrderResponse> startOrder(
             @Valid @RequestBody StartOrderRequest request,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
-        log.info("POST /api/orders: userId={}, productId={}, qty={}, amount={} {}",
+        log.info("POST /api/orders: userId={}, productId={}, qty={}, unitPrice={} {}",
                 request.userId(), request.productId(), request.quantity(),
-                request.amount(), request.currency());
+                request.unitPrice(), request.currency());
 
         boolean isReplay = orchestrationService.findByIdempotencyKey(idempotencyKey).isPresent();
 
@@ -38,7 +38,7 @@ public class SagaController {
                 request.userId(),
                 request.productId(),
                 request.quantity(),
-                request.amount(),
+                request.unitPrice(),
                 request.currency(),
                 idempotencyKey
         );

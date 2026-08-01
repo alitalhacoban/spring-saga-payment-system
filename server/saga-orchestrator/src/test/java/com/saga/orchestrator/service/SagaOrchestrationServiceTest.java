@@ -12,7 +12,11 @@ import com.saga.orchestrator.model.SagaPayload;
 import com.saga.orchestrator.repository.OutboxEventRepository;
 import com.saga.orchestrator.repository.SagaInstanceRepository;
 import com.saga.orchestrator.repository.SagaStepRepository;
+import com.saga.inventory.grpc.CheckStockResponse;
+import com.saga.inventory.grpc.GetProductResponse;
+import com.saga.order.grpc.CreateOrderResponse;
 import com.saga.shared.event.PaymentFailedEvent;
+import com.saga.shared.event.PaymentProcessCommand;
 import com.saga.shared.event.StockReservedEvent;
 import com.saga.shared.kafka.KafkaTopics;
 import org.junit.jupiter.api.BeforeEach;
@@ -64,7 +68,8 @@ class SagaOrchestrationServiceTest {
                 .userId("user-1")
                 .productId(UUID.randomUUID().toString())
                 .quantity(2)
-                .amount(BigDecimal.TEN)
+                .unitPrice(BigDecimal.TEN)
+                .totalAmount(BigDecimal.valueOf(20))
                 .currency("USD")
                 .orderId(UUID.randomUUID())
                 .reservationId(UUID.randomUUID())
@@ -83,6 +88,34 @@ class SagaOrchestrationServiceTest {
                 .payload(json)
                 .recoveryAttempts(recoveryAttempts)
                 .build();
+    }
+
+    @Test
+    void startSaga_usesOrderServiceTotalAsCanonicalPaymentTotal() throws Exception {
+        String productId = UUID.randomUUID().toString();
+        when(inventoryServiceClient.checkStock(productId, 2)).thenReturn(
+                CheckStockResponse.newBuilder().setAvailable(true).build());
+        when(inventoryServiceClient.getProduct(productId)).thenReturn(
+                GetProductResponse.newBuilder().setName("Product").build());
+        when(orderServiceClient.createOrder(
+                "user-1", productId, 2, new BigDecimal("10.00"), null)).thenReturn(
+                CreateOrderResponse.newBuilder()
+                        .setOrderId(UUID.randomUUID().toString())
+                        .setStatus("PENDING")
+                        .setTotalAmount(20.00)
+                        .build());
+        when(sagaInstanceRepository.save(any(SagaInstance.class))).thenAnswer(invocation -> {
+            SagaInstance saga = invocation.getArgument(0);
+            saga.setId(UUID.randomUUID());
+            return saga;
+        });
+
+        SagaInstance saga = sagaOrchestrationService.startSaga(
+                "user-1", productId, 2, new BigDecimal("10.00"), "USD", null);
+
+        SagaPayload payload = objectMapper.readValue(saga.getPayload(), SagaPayload.class);
+        assertThat(payload.getUnitPrice()).isEqualByComparingTo("10.00");
+        assertThat(payload.getTotalAmount()).isEqualByComparingTo("20.00");
     }
 
     @Test
@@ -140,6 +173,13 @@ class SagaOrchestrationServiceTest {
         ArgumentCaptor<OutboxEvent> captor = ArgumentCaptor.forClass(OutboxEvent.class);
         verify(outboxEventRepository).save(captor.capture());
         assertThat(captor.getValue().getTopic()).isEqualTo(KafkaTopics.PAYMENT_PROCESS_REQUEST);
+        try {
+            PaymentProcessCommand command = objectMapper.readValue(
+                    captor.getValue().getPayload(), PaymentProcessCommand.class);
+            assertThat(command.getTotalAmount()).isEqualByComparingTo("20.00");
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
     }
 
     @Test

@@ -83,7 +83,7 @@ public class SagaOrchestrationService {
 
     @Transactional
     public SagaInstance startSaga(String userId, String productId,
-                                  Integer quantity, BigDecimal amount, String currency,
+                                  Integer quantity, BigDecimal unitPrice, String currency,
                                   String idempotencyKey) {
 
         if (idempotencyKey != null) {
@@ -110,15 +110,17 @@ public class SagaOrchestrationService {
                 ? idempotencyKey + ":" + STEP_ORDER_CREATE
                 : null;
         CreateOrderResponse orderResponse = orderServiceClient.createOrder(
-                userId, productId, quantity, amount, orderIdempotencyKey);
+                userId, productId, quantity, unitPrice, orderIdempotencyKey);
         UUID orderId = UUID.fromString(orderResponse.getOrderId());
-        log.info("Order created via gRPC: orderId={}", orderId);
+        BigDecimal totalAmount = BigDecimal.valueOf(orderResponse.getTotalAmount());
+        log.info("Order created via gRPC: orderId={}, totalAmount={}", orderId, totalAmount);
 
         SagaPayload payload = SagaPayload.builder()
                 .userId(userId)
                 .productId(productId)
                 .quantity(quantity)
-                .amount(amount)
+                .unitPrice(unitPrice)
+                .totalAmount(totalAmount)
                 .currency(currency)
                 .orderId(orderId)
                 .build();
@@ -364,7 +366,7 @@ public class SagaOrchestrationService {
                 .sagaId(sagaId)
                 .orderId(payload.getOrderId())
                 .userId(payload.getUserId())
-                .amount(payload.getAmount())
+                .totalAmount(payload.getTotalAmount())
                 .currency(payload.getCurrency())
                 .idempotencyKey(sagaId + ":" + STEP_PAYMENT_PROCESS)
                 .build();

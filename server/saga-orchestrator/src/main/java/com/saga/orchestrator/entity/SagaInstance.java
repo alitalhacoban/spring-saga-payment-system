@@ -38,7 +38,7 @@ public class SagaInstance {
     @Builder.Default
     private SagaStatus status = SagaStatus.STARTED;
 
-    // JSON payload storing context data (user_id, product_id, amount, etc.)
+    // JSON payload storing context data (userId, productId, unitPrice, totalAmount, etc.)
     @Column(name = "payload", columnDefinition = "TEXT")
     private String payload;
 
