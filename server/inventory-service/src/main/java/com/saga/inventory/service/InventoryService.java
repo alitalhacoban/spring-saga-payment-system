@@ -109,8 +109,13 @@ public class InventoryService {
 
     @Transactional
     public StockReservation releaseStock(UUID sagaId, UUID reservationId, String reason) {
-        StockReservation reservation = reservationRepository.findById(reservationId)
+        StockReservation reservation = reservationRepository.findByIdWithLock(reservationId)
                 .orElseThrow(() -> new EntityNotFoundException("Reservation not found: " + reservationId));
+
+        if (reservation.getStatus() == ReservationStatus.RELEASED) {
+            log.info("Stock release skipped — idempotent replay: reservationId={}", reservationId);
+            return reservation;
+        }
 
         Product product = productRepository.findByIdWithLock(reservation.getProduct().getId())
                 .orElseThrow(() -> new EntityNotFoundException("Product not found"));
