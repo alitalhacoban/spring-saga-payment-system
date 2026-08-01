@@ -30,24 +30,22 @@ A central **Saga Orchestrator** drives the entire flow as a persisted state mach
 
 ## Architecture
 
-```
-Client
-  |
-  v REST
-+----------------------+
-|  Saga Orchestrator   |  (Port 8084 / gRPC 9084)
-|  PostgreSQL :5435    |
-+-----------+----------+
-            | Kafka commands & events
-   +--------+---------------+
-   v        v                v
-+----------+  +--------------+  +-------------+
-|  Order   |  |  Inventory   |  |   Payment   |
-| Service  |  |   Service    |  |   Service   |
-| :8082    |  |    :8083     |  |    :8081    |
-| gRPC 9082|  |  gRPC :9083  |  |  gRPC :9081 |
-| PG :5433 |  |   PG :5434   |  |   PG :5436  |
-+----------+  +--------------+  +-------------+
+```mermaid
+flowchart TB
+    Client(["Client"])
+    Orchestrator["Saga Orchestrator\n:8084 / gRPC :9084"]
+    Order["Order Service\n:8082 / gRPC :9082"]
+    Inventory["Inventory Service\n:8083 / gRPC :9083"]
+    Payment["Payment Service\n:8081 / gRPC :9081"]
+    Kafka[["Kafka"]]
+
+    Client -- "REST" --> Orchestrator
+    Orchestrator -- "gRPC (sync lookups)" --> Order
+    Orchestrator -- "gRPC (sync lookups)" --> Inventory
+    Orchestrator <-- "commands / events" --> Kafka
+    Kafka <--> Order
+    Kafka <--> Inventory
+    Kafka <--> Payment
 ```
 
 The orchestrator also makes direct **gRPC calls** into Order and Inventory for synchronous lookups (checking stock availability, validating order status before processing payment). All four services additionally run their own transactional-outbox poller against their own database, publishing to Kafka independently of the request path.
@@ -58,41 +56,23 @@ The orchestrator also makes direct **gRPC calls** into Order and Inventory for s
 
 The successful end-to-end flow when stock is available and payment succeeds.
 
-```
-Client
-  |
-  |  POST /api/orders
-  v
-Orchestrator
-  |-- gRPC --> Inventory: CheckStock         (guard: fail fast if stock is zero)
-  |-- gRPC --> Inventory: GetProduct         (fetch canonical product info)
-  |-- gRPC --> Order:     CreateOrder        (create order in PENDING state)
-  |
-  |-- Kafka --> [stock.reserve.request]
-                    |
-                    v
-               Inventory Service
-                    |  reserves stock (pessimistic lock)
-                    |-- Kafka --> [stock.reserved]
-                                      |
-                                      v
-                                 Orchestrator
-                                      |-- Kafka --> [payment.process.request]
-                                                        |
-                                                        v
-                                                   Payment Service
-                                                        |  validates order via gRPC
-                                                        |  processes payment
-                                                        |-- Kafka --> [payment.processed]
-                                                                           |
-                                                                           v
-                                                                      Orchestrator
-                                                                           |  saga.status = COMPLETED
-                                                                           |-- Kafka --> [order.confirmed]
-                                                                                              |
-                                                                                              v
-                                                                                        Order Service
-                                                                                             order.status = CONFIRMED
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Orchestrator
+    participant Inventory
+    participant Payment
+    participant Order
+
+    Client->>Orchestrator: POST /api/orders
+    Orchestrator->>Inventory: gRPC CheckStock / GetProduct
+    Orchestrator->>Order: gRPC CreateOrder (PENDING)
+    Orchestrator->>Inventory: stock.reserve.request
+    Inventory-->>Orchestrator: stock.reserved
+    Orchestrator->>Payment: payment.process.request
+    Payment-->>Orchestrator: payment.processed
+    Orchestrator->>Order: order.confirmed
+    Note over Orchestrator: saga.status = COMPLETED
 ```
 
 > **Final state:** `SagaInstance.status = COMPLETED`, `Order.status = CONFIRMED`
@@ -107,23 +87,17 @@ There are two compensation scenarios depending on which step fails.
 
 Triggered when the inventory service does not have enough stock. Nothing has been charged yet, so there is nothing to release except the order itself.
 
-```
-Orchestrator
-  |-- Kafka --> [stock.reserve.request]
-                    |
-                    v
-               Inventory Service
-                    |  insufficient stock
-                    |-- Kafka --> [stock.reservation.failed]
-                                        |
-                                        v
-                                   Orchestrator
-                                        |  saga.status = COMPENSATING
-                                        |-- Kafka --> [order.cancelled]
-                                                           |
-                                                           v
-                                                     Order Service
-                                                          order.status = CANCELLED
+```mermaid
+sequenceDiagram
+    participant Orchestrator
+    participant Inventory
+    participant Order
+
+    Orchestrator->>Inventory: stock.reserve.request
+    Inventory-->>Orchestrator: stock.reservation.failed
+    Note over Orchestrator: saga.status = COMPENSATING
+    Orchestrator->>Order: order.cancelled
+    Note over Orchestrator: saga.status = FAILED
 ```
 
 > **Final state:** `SagaInstance.status = FAILED`
@@ -132,33 +106,20 @@ Orchestrator
 
 Triggered when the payment gateway rejects the transaction (simulated rule: total amount >= 10,000 is declined). Stock must be released before the order is cancelled — payment is charged last, so no money has actually moved and there is nothing to refund, only stock to give back.
 
-```
-Orchestrator
-  |-- Kafka --> [payment.process.request]
-                    |
-                    v
-               Payment Service
-                    |  payment rejected
-                    |  payment.status = FAILED
-                    |-- Kafka --> [payment.failed]
-                                      |
-                                      v
-                                 Orchestrator
-                                      |  saga.status = COMPENSATING
-                                      |-- Kafka --> [stock.release.request]
-                                                        |
-                                                        v
-                                                   Inventory Service
-                                                        |  releases reserved stock
-                                                        |-- Kafka --> [stock.released]
-                                                                           |
-                                                                           v
-                                                                      Orchestrator
-                                                                           |-- Kafka --> [order.cancelled]
-                                                                                              |
-                                                                                              v
-                                                                                        Order Service
-                                                                                             order.status = CANCELLED
+```mermaid
+sequenceDiagram
+    participant Orchestrator
+    participant Payment
+    participant Inventory
+    participant Order
+
+    Orchestrator->>Payment: payment.process.request
+    Payment-->>Orchestrator: payment.failed
+    Note over Orchestrator: saga.status = COMPENSATING
+    Orchestrator->>Inventory: stock.release.request
+    Inventory-->>Orchestrator: stock.released
+    Orchestrator->>Order: order.cancelled
+    Note over Orchestrator: saga.status = FAILED
 ```
 
 > **Final state:** `SagaInstance.status = FAILED`
