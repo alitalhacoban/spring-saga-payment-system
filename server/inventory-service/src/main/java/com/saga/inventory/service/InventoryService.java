@@ -1,10 +1,17 @@
 package com.saga.inventory.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.saga.inventory.entity.OutboxEvent;
 import com.saga.inventory.entity.Product;
 import com.saga.inventory.entity.StockReservation;
+import com.saga.inventory.entity.enums.OutboxStatus;
 import com.saga.inventory.entity.enums.ReservationStatus;
+import com.saga.inventory.outbox.OutboxEventRecorder;
+import com.saga.inventory.repository.OutboxEventRepository;
 import com.saga.inventory.repository.ProductRepository;
 import com.saga.inventory.repository.StockReservationRepository;
+import com.saga.shared.event.BaseEvent;
 import com.saga.shared.event.StockReleasedEvent;
 import com.saga.shared.event.StockReservationFailedEvent;
 import com.saga.shared.event.StockReservedEvent;
@@ -13,7 +20,6 @@ import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,7 +33,9 @@ public class InventoryService {
 
     private final ProductRepository productRepository;
     private final StockReservationRepository reservationRepository;
-    private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final OutboxEventRepository outboxEventRepository;
+    private final OutboxEventRecorder outboxEventRecorder;
+    private final ObjectMapper objectMapper;
 
     @Transactional
     public StockReservation reserveStock(UUID sagaId, String orderId, UUID productId, Integer quantity,
@@ -59,7 +67,8 @@ public class InventoryService {
                     .reason("Insufficient stock")
                     .build();
             event.init();
-            kafkaTemplate.send(KafkaTopics.STOCK_RESERVATION_FAILED, orderId, event);
+            outboxEventRecorder.recordInNewTransaction(toOutboxEvent("StockReservation", null,
+                    KafkaTopics.STOCK_RESERVATION_FAILED, orderId, event));
             throw new IllegalStateException("Insufficient stock for product: " + productId);
         }
 
@@ -93,7 +102,8 @@ public class InventoryService {
                 .quantity(quantity)
                 .build();
         event.init();
-        kafkaTemplate.send(KafkaTopics.STOCK_RESERVED, orderId, event);
+        outboxEventRepository.save(toOutboxEvent("StockReservation", reservation.getId().toString(),
+                KafkaTopics.STOCK_RESERVED, orderId, event));
         return reservation;
     }
 
@@ -119,7 +129,8 @@ public class InventoryService {
                 .reservationId(reservation.getId())
                 .build();
         event.init();
-        kafkaTemplate.send(KafkaTopics.STOCK_RELEASED, reservation.getOrderId(), event);
+        outboxEventRepository.save(toOutboxEvent("StockReservation", reservation.getId().toString(),
+                KafkaTopics.STOCK_RELEASED, reservation.getOrderId(), event));
         return reservation;
     }
 
@@ -150,5 +161,22 @@ public class InventoryService {
     public StockReservation findReservationByOrderId(String orderId) {
         return reservationRepository.findByOrderId(orderId)
                 .orElseThrow(() -> new EntityNotFoundException("Reservation not found for order: " + orderId));
+    }
+
+    private OutboxEvent toOutboxEvent(String aggregateType, String aggregateId,
+                                      String topic, String kafkaKey, BaseEvent event) {
+        try {
+            return OutboxEvent.builder()
+                    .aggregateType(aggregateType)
+                    .aggregateId(aggregateId)
+                    .eventType(event.getClass().getName())
+                    .topic(topic)
+                    .kafkaKey(kafkaKey)
+                    .payload(objectMapper.writeValueAsString(event))
+                    .status(OutboxStatus.PENDING)
+                    .build();
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize event for outbox: " + event.getClass(), e);
+        }
     }
 }

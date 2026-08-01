@@ -1,10 +1,16 @@
 package com.saga.payment.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.saga.order.grpc.GetOrderResponse;
+import com.saga.payment.entity.OutboxEvent;
 import com.saga.payment.entity.Payment;
+import com.saga.payment.entity.enums.OutboxStatus;
 import com.saga.payment.entity.enums.PaymentStatus;
 import com.saga.payment.grpc.OrderServiceClient;
+import com.saga.payment.repository.OutboxEventRepository;
 import com.saga.payment.repository.PaymentRepository;
+import com.saga.shared.event.BaseEvent;
 import com.saga.shared.event.PaymentCancelledEvent;
 import com.saga.shared.event.PaymentFailedEvent;
 import com.saga.shared.event.PaymentProcessedEvent;
@@ -13,7 +19,6 @@ import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,7 +31,8 @@ import java.util.UUID;
 public class PaymentService {
 
     private final PaymentRepository paymentRepository;
-    private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final OutboxEventRepository outboxEventRepository;
+    private final ObjectMapper objectMapper;
     private final OrderServiceClient orderServiceClient;
 
     @Transactional
@@ -87,7 +93,8 @@ public class PaymentService {
                     .currency(currency)
                     .build();
             event.init();
-            kafkaTemplate.send(KafkaTopics.PAYMENT_PROCESSED, orderId, event);
+            outboxEventRepository.save(toOutboxEvent("Payment", payment.getId().toString(),
+                    KafkaTopics.PAYMENT_PROCESSED, orderId, event));
         } else {
             payment.setStatus(PaymentStatus.FAILED);
             payment.setFailureReason("Payment declined by gateway");
@@ -103,7 +110,8 @@ public class PaymentService {
                     .reason("Payment declined by gateway")
                     .build();
             event.init();
-            kafkaTemplate.send(KafkaTopics.PAYMENT_FAILED, orderId, event);
+            outboxEventRepository.save(toOutboxEvent("Payment", payment.getId().toString(),
+                    KafkaTopics.PAYMENT_FAILED, orderId, event));
         }
         return payment;
     }
@@ -124,7 +132,8 @@ public class PaymentService {
                 .reason(reason)
                 .build();
         event.init();
-        kafkaTemplate.send(KafkaTopics.PAYMENT_CANCELLED, payment.getOrderId(), event);
+        outboxEventRepository.save(toOutboxEvent("Payment", payment.getId().toString(),
+                KafkaTopics.PAYMENT_CANCELLED, payment.getOrderId(), event));
         return payment;
     }
 
@@ -143,5 +152,22 @@ public class PaymentService {
     // Simulates payment gateway approval logic
     private boolean isPaymentApproved(BigDecimal amount) {
         return amount.compareTo(BigDecimal.valueOf(10_000)) < 0;
+    }
+
+    private OutboxEvent toOutboxEvent(String aggregateType, String aggregateId,
+                                      String topic, String kafkaKey, BaseEvent event) {
+        try {
+            return OutboxEvent.builder()
+                    .aggregateType(aggregateType)
+                    .aggregateId(aggregateId)
+                    .eventType(event.getClass().getName())
+                    .topic(topic)
+                    .kafkaKey(kafkaKey)
+                    .payload(objectMapper.writeValueAsString(event))
+                    .status(OutboxStatus.PENDING)
+                    .build();
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize event for outbox: " + event.getClass(), e);
+        }
     }
 }

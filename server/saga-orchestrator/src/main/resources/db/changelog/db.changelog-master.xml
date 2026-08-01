@@ -8,5 +8,6 @@
     <include file="db/changelog/changes/001-create-saga-instances-table.xml"/>
     <include file="db/changelog/changes/002-create-saga-steps-table.xml"/>
     <include file="db/changelog/changes/003-add-idempotency-key-to-saga-instances.xml"/>
+    <include file="db/changelog/changes/004-create-outbox-events-table.xml"/>
 
 </databaseChangeLog>

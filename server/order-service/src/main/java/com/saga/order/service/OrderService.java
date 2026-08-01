@@ -1,14 +1,19 @@
 package com.saga.order.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.saga.order.entity.Order;
+import com.saga.order.entity.OutboxEvent;
 import com.saga.order.entity.enums.OrderStatus;
+import com.saga.order.entity.enums.OutboxStatus;
 import com.saga.order.repository.OrderRepository;
+import com.saga.order.repository.OutboxEventRepository;
+import com.saga.shared.event.BaseEvent;
 import com.saga.shared.event.OrderCreatedEvent;
 import com.saga.shared.kafka.KafkaTopics;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,7 +27,8 @@ import java.util.UUID;
 public class OrderService {
 
     private final OrderRepository orderRepository;
-    private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final OutboxEventRepository outboxEventRepository;
+    private final ObjectMapper objectMapper;
 
     @Transactional
     public Order createOrder(String userId, String productId, Integer quantity, BigDecimal price) {
@@ -51,8 +57,9 @@ public class OrderService {
                 .build();
         event.init();
 
-        kafkaTemplate.send(KafkaTopics.ORDER_CREATED, order.getId().toString(), event);
-        log.info("OrderCreatedEvent published: orderId={}", order.getId());
+        outboxEventRepository.save(toOutboxEvent("Order", order.getId().toString(),
+                KafkaTopics.ORDER_CREATED, order.getId().toString(), event));
+        log.info("OrderCreatedEvent enqueued to outbox: orderId={}", order.getId());
 
         return order;
     }
@@ -89,5 +96,22 @@ public class OrderService {
     @Transactional(readOnly = true)
     public List<Order> findAll() {
         return orderRepository.findAll();
+    }
+
+    private OutboxEvent toOutboxEvent(String aggregateType, String aggregateId,
+                                      String topic, String kafkaKey, BaseEvent event) {
+        try {
+            return OutboxEvent.builder()
+                    .aggregateType(aggregateType)
+                    .aggregateId(aggregateId)
+                    .eventType(event.getClass().getName())
+                    .topic(topic)
+                    .kafkaKey(kafkaKey)
+                    .payload(objectMapper.writeValueAsString(event))
+                    .status(OutboxStatus.PENDING)
+                    .build();
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize event for outbox: " + event.getClass(), e);
+        }
     }
 }

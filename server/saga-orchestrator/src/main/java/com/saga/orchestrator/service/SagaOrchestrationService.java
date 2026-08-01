@@ -10,9 +10,12 @@ import com.saga.orchestrator.entity.SagaStep;
 import com.saga.orchestrator.entity.enums.SagaStatus;
 import com.saga.orchestrator.entity.enums.SagaStepName;
 import com.saga.orchestrator.entity.enums.SagaStepStatus;
+import com.saga.orchestrator.entity.OutboxEvent;
+import com.saga.orchestrator.entity.enums.OutboxStatus;
 import com.saga.orchestrator.grpc.InventoryServiceClient;
 import com.saga.orchestrator.grpc.OrderServiceClient;
 import com.saga.orchestrator.model.SagaPayload;
+import com.saga.orchestrator.repository.OutboxEventRepository;
 import com.saga.orchestrator.repository.SagaInstanceRepository;
 import com.saga.orchestrator.repository.SagaStepRepository;
 import com.saga.shared.event.*;
@@ -21,7 +24,6 @@ import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -65,7 +67,7 @@ public class SagaOrchestrationService {
 
     private final SagaInstanceRepository sagaInstanceRepository;
     private final SagaStepRepository sagaStepRepository;
-    private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final OutboxEventRepository outboxEventRepository;
     private final ObjectMapper objectMapper;
     private final OrderServiceClient orderServiceClient;
     private final InventoryServiceClient inventoryServiceClient;
@@ -170,7 +172,8 @@ public class SagaOrchestrationService {
                 .reservationId(payload.getReservationId())
                 .build();
         confirmed.init();
-        kafkaTemplate.send(KafkaTopics.ORDER_CONFIRMED, payload.getOrderId().toString(), confirmed);
+        outboxEventRepository.save(toOutboxEvent(saga.getId(),
+                KafkaTopics.ORDER_CONFIRMED, payload.getOrderId().toString(), confirmed));
     }
 
     @Transactional
@@ -207,8 +210,8 @@ public class SagaOrchestrationService {
                 .reason(event.getReason())
                 .build();
         cmd.init();
-        kafkaTemplate.send(KafkaTopics.STOCK_RELEASE_REQUEST,
-                payload.getOrderId().toString(), cmd);
+        outboxEventRepository.save(toOutboxEvent(saga.getId(),
+                KafkaTopics.STOCK_RELEASE_REQUEST, payload.getOrderId().toString(), cmd));
     }
 
     @Transactional
@@ -240,8 +243,8 @@ public class SagaOrchestrationService {
                 .reason(event.getReason())
                 .build();
         cmd.init();
-        kafkaTemplate.send(KafkaTopics.STOCK_RELEASE_REQUEST,
-                payload.getOrderId().toString(), cmd);
+        outboxEventRepository.save(toOutboxEvent(saga.getId(),
+                KafkaTopics.STOCK_RELEASE_REQUEST, payload.getOrderId().toString(), cmd));
     }
 
     @Transactional(readOnly = true)
@@ -273,9 +276,9 @@ public class SagaOrchestrationService {
                 .idempotencyKey(sagaId + ":" + STEP_STOCK_RESERVE)
                 .build();
         cmd.init();
-        kafkaTemplate.send(KafkaTopics.STOCK_RESERVE_REQUEST,
-                payload.getOrderId().toString(), cmd);
-        log.info("Saga [{}] → published StockReserveCommand", sagaId);
+        outboxEventRepository.save(toOutboxEvent(sagaId,
+                KafkaTopics.STOCK_RESERVE_REQUEST, payload.getOrderId().toString(), cmd));
+        log.info("Saga [{}] → enqueued StockReserveCommand to outbox", sagaId);
     }
 
     private void publishPaymentProcessCommand(UUID sagaId, SagaPayload payload) {
@@ -289,9 +292,9 @@ public class SagaOrchestrationService {
                 .idempotencyKey(sagaId + ":" + STEP_PAYMENT_PROCESS)
                 .build();
         cmd.init();
-        kafkaTemplate.send(KafkaTopics.PAYMENT_PROCESS_REQUEST,
-                payload.getOrderId().toString(), cmd);
-        log.info("Saga [{}] → published PaymentProcessCommand", sagaId);
+        outboxEventRepository.save(toOutboxEvent(sagaId,
+                KafkaTopics.PAYMENT_PROCESS_REQUEST, payload.getOrderId().toString(), cmd));
+        log.info("Saga [{}] → enqueued PaymentProcessCommand to outbox", sagaId);
     }
 
     private void publishOrderCancelledAndFail(SagaInstance saga, UUID orderId, String reason) {
@@ -302,7 +305,8 @@ public class SagaOrchestrationService {
                 .reason(reason)
                 .build();
         event.init();
-        kafkaTemplate.send(KafkaTopics.ORDER_CANCELLED, orderId.toString(), event);
+        outboxEventRepository.save(toOutboxEvent(saga.getId(),
+                KafkaTopics.ORDER_CANCELLED, orderId.toString(), event));
 
         recordStep(saga, SagaStepName.ORDER_CANCELLED, SagaStepStatus.COMPENSATED, reason);
         saga.setCurrentStep(SagaStepName.ORDER_CANCELLED);
@@ -339,6 +343,22 @@ public class SagaOrchestrationService {
             return objectMapper.readValue(json, SagaPayload.class);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to deserialize saga payload", e);
+        }
+    }
+
+    private OutboxEvent toOutboxEvent(UUID sagaId, String topic, String kafkaKey, BaseEvent event) {
+        try {
+            return OutboxEvent.builder()
+                    .aggregateType("SagaInstance")
+                    .aggregateId(sagaId.toString())
+                    .eventType(event.getClass().getName())
+                    .topic(topic)
+                    .kafkaKey(kafkaKey)
+                    .payload(objectMapper.writeValueAsString(event))
+                    .status(OutboxStatus.PENDING)
+                    .build();
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize event for outbox: " + event.getClass(), e);
         }
     }
 }
