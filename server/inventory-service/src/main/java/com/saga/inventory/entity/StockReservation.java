@@ -38,6 +38,9 @@ public class StockReservation {
     @Builder.Default
     private ReservationStatus status = ReservationStatus.RESERVED;
 
+    @Column(name = "idempotency_key")
+    private String idempotencyKey;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

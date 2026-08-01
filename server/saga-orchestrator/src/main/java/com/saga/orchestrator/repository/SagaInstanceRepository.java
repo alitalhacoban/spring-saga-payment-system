@@ -14,5 +14,7 @@ public interface SagaInstanceRepository extends JpaRepository<SagaInstance, UUID
 
     Optional<SagaInstance> findByOrderId(String orderId);
 
+    Optional<SagaInstance> findByIdempotencyKey(String idempotencyKey);
+
     List<SagaInstance> findByStatus(SagaStatus status);
 }

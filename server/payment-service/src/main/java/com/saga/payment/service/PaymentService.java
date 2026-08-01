@@ -12,6 +12,7 @@ import com.saga.shared.kafka.KafkaTopics;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,7 +31,16 @@ public class PaymentService {
 
     @Transactional
     public Payment processPayment(UUID sagaId, String orderId, String userId,
-                                  BigDecimal amount, String currency) {
+                                  BigDecimal amount, String currency, String idempotencyKey) {
+        if (idempotencyKey != null) {
+            var existing = paymentRepository.findByIdempotencyKey(idempotencyKey);
+            if (existing.isPresent()) {
+                log.info("Payment processing skipped — idempotent replay: idempotencyKey={}, paymentId={}",
+                        idempotencyKey, existing.get().getId());
+                return existing.get();
+            }
+        }
+
         // Validate the order via gRPC before charging — ensures the order is still PENDING
         GetOrderResponse orderDetails = orderServiceClient.getOrder(orderId);
         log.info("Order validated via gRPC: orderId={}, status={}, userId={}, totalAmount={}",
@@ -47,8 +57,17 @@ public class PaymentService {
                 .amount(amount)
                 .currency(currency)
                 .status(PaymentStatus.PENDING)
+                .idempotencyKey(idempotencyKey)
                 .build();
-        payment = paymentRepository.save(payment);
+        try {
+            payment = paymentRepository.save(payment);
+        } catch (DataIntegrityViolationException e) {
+            Payment raced = paymentRepository.findByIdempotencyKey(idempotencyKey)
+                    .orElseThrow(() -> e);
+            log.info("Payment processing skipped — idempotent replay (race): idempotencyKey={}, paymentId={}",
+                    idempotencyKey, raced.getId());
+            return raced;
+        }
         log.info("Payment initiated: id={}, orderId={}, amount={} {}", payment.getId(), orderId, amount, currency);
 
         // TODO: integrate with real payment gateway

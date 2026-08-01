@@ -26,10 +26,13 @@ public class InventoryEventListener {
                     cmd.getSagaId(),
                     cmd.getOrderId().toString(),
                     cmd.getProductId(),
-                    cmd.getQuantity()
+                    cmd.getQuantity(),
+                    cmd.getIdempotencyKey()
             );
-        } catch (Exception e) {
-            // StockReservationFailedEvent is already published inside reserveStock()
+        } catch (IllegalStateException e) {
+            // Business failure (insufficient stock) — StockReservationFailedEvent already
+            // published inside reserveStock(). Infra exceptions propagate to the Kafka
+            // error handler for retry/DLQ instead of being swallowed here.
             log.warn("Stock reservation failed for sagaId={}: {}", cmd.getSagaId(), e.getMessage());
         }
     }

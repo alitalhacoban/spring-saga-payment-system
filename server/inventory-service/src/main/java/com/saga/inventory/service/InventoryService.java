@@ -12,6 +12,7 @@ import com.saga.shared.kafka.KafkaTopics;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,7 +30,17 @@ public class InventoryService {
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
     @Transactional
-    public StockReservation reserveStock(UUID sagaId, String orderId, UUID productId, Integer quantity) {
+    public StockReservation reserveStock(UUID sagaId, String orderId, UUID productId, Integer quantity,
+                                         String idempotencyKey) {
+        if (idempotencyKey != null) {
+            var existing = reservationRepository.findByIdempotencyKey(idempotencyKey);
+            if (existing.isPresent()) {
+                log.info("Stock reservation skipped — idempotent replay: idempotencyKey={}, reservationId={}",
+                        idempotencyKey, existing.get().getId());
+                return existing.get();
+            }
+        }
+
         // Pessimistic lock to prevent concurrent over-reservation
         Product product = productRepository.findByIdWithLock(productId)
                 .orElseThrow(() -> new EntityNotFoundException("Product not found: " + productId));
@@ -60,8 +71,17 @@ public class InventoryService {
                 .product(product)
                 .quantity(quantity)
                 .status(ReservationStatus.RESERVED)
+                .idempotencyKey(idempotencyKey)
                 .build();
-        reservation = reservationRepository.save(reservation);
+        try {
+            reservation = reservationRepository.save(reservation);
+        } catch (DataIntegrityViolationException e) {
+            StockReservation raced = reservationRepository.findByIdempotencyKey(idempotencyKey)
+                    .orElseThrow(() -> e);
+            log.info("Stock reservation skipped — idempotent replay (race): idempotencyKey={}, reservationId={}",
+                    idempotencyKey, raced.getId());
+            return raced;
+        }
         log.info("Stock reserved: reservationId={}, productId={}, quantity={}", reservation.getId(), productId, quantity);
 
         StockReservedEvent event = StockReservedEvent.builder()

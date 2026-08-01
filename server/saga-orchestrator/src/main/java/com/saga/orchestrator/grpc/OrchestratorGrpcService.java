@@ -25,19 +25,26 @@ public class OrchestratorGrpcService extends OrchestratorServiceGrpc.Orchestrato
                 request.getUserId(), request.getProductId(),
                 request.getQuantity(), request.getAmount(), request.getCurrency());
         try {
+            String idempotencyKey = request.getIdempotencyKey().isEmpty()
+                    ? null : request.getIdempotencyKey();
+            boolean isReplay = orchestrationService.findByIdempotencyKey(idempotencyKey).isPresent();
+
             SagaInstance saga = orchestrationService.startSaga(
                     request.getUserId(),
                     request.getProductId(),
                     request.getQuantity(),
                     BigDecimal.valueOf(request.getAmount()),
-                    request.getCurrency()
+                    request.getCurrency(),
+                    idempotencyKey
             );
 
             StartSagaResponse response = StartSagaResponse.newBuilder()
                     .setSagaId(saga.getId().toString())
                     .setOrderId(saga.getOrderId() != null ? saga.getOrderId() : "")
                     .setStatus(saga.getStatus().name())
-                    .setMessage("Saga started successfully")
+                    .setMessage(isReplay
+                            ? "Saga already exists for this idempotency key (idempotent replay)"
+                            : "Saga started successfully")
                     .build();
 
             responseObserver.onNext(response);

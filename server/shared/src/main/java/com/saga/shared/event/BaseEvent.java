@@ -18,6 +18,10 @@ public abstract class BaseEvent {
     private UUID eventId;
     private UUID sagaId;
 
+    // Deterministic per business operation (e.g. sagaId+step) — must be set explicitly by the
+    // publisher, never auto-generated, so redeliveries/retries of the same step keep the same key.
+    private String idempotencyKey;
+
     @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")
     private LocalDateTime timestamp;
 

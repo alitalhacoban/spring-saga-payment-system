@@ -29,7 +29,8 @@ public class InventoryGrpcService extends InventoryServiceGrpc.InventoryServiceI
                     null, // sagaId unknown in direct gRPC calls
                     request.getOrderId(),
                     UUID.fromString(request.getProductId()),
-                    request.getQuantity()
+                    request.getQuantity(),
+                    null // no idempotency key on the direct gRPC path
             );
 
             ReserveStockResponse response = ReserveStockResponse.newBuilder()

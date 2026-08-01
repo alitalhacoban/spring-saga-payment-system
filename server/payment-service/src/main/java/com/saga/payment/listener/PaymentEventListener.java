@@ -26,7 +26,8 @@ public class PaymentEventListener {
                 cmd.getOrderId().toString(),
                 cmd.getUserId(),
                 cmd.getAmount(),
-                cmd.getCurrency()
+                cmd.getCurrency(),
+                cmd.getIdempotencyKey()
         );
     }
 

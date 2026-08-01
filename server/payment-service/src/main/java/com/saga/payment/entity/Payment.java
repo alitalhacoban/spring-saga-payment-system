@@ -44,6 +44,9 @@ public class Payment {
     @Column(name = "failure_reason", length = 500)
     private String failureReason;
 
+    @Column(name = "idempotency_key")
+    private String idempotencyKey;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

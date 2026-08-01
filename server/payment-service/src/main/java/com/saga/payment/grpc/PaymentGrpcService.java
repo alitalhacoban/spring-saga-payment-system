@@ -29,7 +29,8 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
                     request.getOrderId(),
                     request.getUserId(),
                     BigDecimal.valueOf(request.getAmount()),
-                    request.getCurrency()
+                    request.getCurrency(),
+                    null // no idempotency key on the direct gRPC path
             );
 
             PaymentResponse response = PaymentResponse.newBuilder()

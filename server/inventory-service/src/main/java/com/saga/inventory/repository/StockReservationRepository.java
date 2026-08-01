@@ -14,5 +14,7 @@ public interface StockReservationRepository extends JpaRepository<StockReservati
 
     Optional<StockReservation> findByOrderId(String orderId);
 
+    Optional<StockReservation> findByIdempotencyKey(String idempotencyKey);
+
     List<StockReservation> findByStatus(ReservationStatus status);
 }

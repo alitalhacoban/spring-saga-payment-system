@@ -20,12 +20,14 @@ import com.saga.shared.kafka.KafkaTopics;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -58,6 +60,9 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class SagaOrchestrationService {
 
+    private static final String STEP_STOCK_RESERVE = "STOCK_RESERVE";
+    private static final String STEP_PAYMENT_PROCESS = "PAYMENT_PROCESS";
+
     private final SagaInstanceRepository sagaInstanceRepository;
     private final SagaStepRepository sagaStepRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
@@ -67,7 +72,17 @@ public class SagaOrchestrationService {
 
     @Transactional
     public SagaInstance startSaga(String userId, String productId,
-                                  Integer quantity, BigDecimal amount, String currency) {
+                                  Integer quantity, BigDecimal amount, String currency,
+                                  String idempotencyKey) {
+
+        if (idempotencyKey != null) {
+            var existing = sagaInstanceRepository.findByIdempotencyKey(idempotencyKey);
+            if (existing.isPresent()) {
+                log.info("Saga start skipped — idempotent replay: idempotencyKey={}, sagaId={}",
+                        idempotencyKey, existing.get().getId());
+                return existing.get();
+            }
+        }
 
         // Advisory stock check via gRPC — fail fast before touching order-service
         CheckStockResponse stockCheck = inventoryServiceClient.checkStock(productId, quantity);
@@ -99,8 +114,17 @@ public class SagaOrchestrationService {
                 .currentStep(SagaStepName.ORDER_CREATED)
                 .status(SagaStatus.STARTED)
                 .payload(toJson(payload))
+                .idempotencyKey(idempotencyKey)
                 .build();
-        saga = sagaInstanceRepository.save(saga);
+        try {
+            saga = sagaInstanceRepository.save(saga);
+        } catch (DataIntegrityViolationException e) {
+            SagaInstance raced = sagaInstanceRepository.findByIdempotencyKey(idempotencyKey)
+                    .orElseThrow(() -> e);
+            log.info("Saga start skipped — idempotent replay (race): idempotencyKey={}, sagaId={}",
+                    idempotencyKey, raced.getId());
+            return raced;
+        }
 
         recordStep(saga, SagaStepName.ORDER_CREATED, SagaStepStatus.COMPLETED, null);
         log.info("Saga started: id={}, orderId={}", saga.getId(), orderId);
@@ -221,6 +245,14 @@ public class SagaOrchestrationService {
     }
 
     @Transactional(readOnly = true)
+    public Optional<SagaInstance> findByIdempotencyKey(String idempotencyKey) {
+        if (idempotencyKey == null) {
+            return Optional.empty();
+        }
+        return sagaInstanceRepository.findByIdempotencyKey(idempotencyKey);
+    }
+
+    @Transactional(readOnly = true)
     public SagaInstance findById(UUID sagaId) {
         return sagaInstanceRepository.findById(sagaId)
                 .orElseThrow(() -> new EntityNotFoundException("Saga not found: " + sagaId));
@@ -238,6 +270,7 @@ public class SagaOrchestrationService {
                 .orderId(payload.getOrderId())
                 .productId(UUID.fromString(payload.getProductId()))
                 .quantity(payload.getQuantity())
+                .idempotencyKey(sagaId + ":" + STEP_STOCK_RESERVE)
                 .build();
         cmd.init();
         kafkaTemplate.send(KafkaTopics.STOCK_RESERVE_REQUEST,
@@ -253,6 +286,7 @@ public class SagaOrchestrationService {
                 .userId(payload.getUserId())
                 .amount(payload.getAmount())
                 .currency(payload.getCurrency())
+                .idempotencyKey(sagaId + ":" + STEP_PAYMENT_PROCESS)
                 .build();
         cmd.init();
         kafkaTemplate.send(KafkaTopics.PAYMENT_PROCESS_REQUEST,

@@ -25,26 +25,33 @@ public class SagaController {
     private final SagaOrchestrationService orchestrationService;
 
     @PostMapping("/api/orders")
-    public ResponseEntity<StartOrderResponse> startOrder(@Valid @RequestBody StartOrderRequest request) {
+    public ResponseEntity<StartOrderResponse> startOrder(
+            @Valid @RequestBody StartOrderRequest request,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         log.info("POST /api/orders: userId={}, productId={}, qty={}, amount={} {}",
                 request.userId(), request.productId(), request.quantity(),
                 request.amount(), request.currency());
+
+        boolean isReplay = orchestrationService.findByIdempotencyKey(idempotencyKey).isPresent();
 
         SagaInstance saga = orchestrationService.startSaga(
                 request.userId(),
                 request.productId(),
                 request.quantity(),
                 request.amount(),
-                request.currency()
+                request.currency(),
+                idempotencyKey
         );
 
         return ResponseEntity
-                .status(HttpStatus.CREATED)
+                .status(isReplay ? HttpStatus.OK : HttpStatus.CREATED)
                 .body(new StartOrderResponse(
                         saga.getId(),
                         saga.getOrderId(),
                         saga.getStatus().name(),
-                        "Saga started. Poll GET /api/sagas/" + saga.getId() + " for status."
+                        isReplay
+                                ? "Saga already exists for this idempotency key (idempotent replay)."
+                                : "Saga started. Poll GET /api/sagas/" + saga.getId() + " for status."
                 ));
     }
 
