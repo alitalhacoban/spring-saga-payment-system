@@ -64,6 +64,7 @@ public class SagaOrchestrationService {
 
     private static final String STEP_STOCK_RESERVE = "STOCK_RESERVE";
     private static final String STEP_PAYMENT_PROCESS = "PAYMENT_PROCESS";
+    private static final String STEP_ORDER_CREATE = "ORDER_CREATE";
 
     private final SagaInstanceRepository sagaInstanceRepository;
     private final SagaStepRepository sagaStepRepository;
@@ -97,8 +98,11 @@ public class SagaOrchestrationService {
         log.info("Product validated via gRPC: name='{}', availableQty={}",
                 productInfo.getName(), productInfo.getAvailableQuantity());
 
+        String orderIdempotencyKey = idempotencyKey != null
+                ? idempotencyKey + ":" + STEP_ORDER_CREATE
+                : null;
         CreateOrderResponse orderResponse = orderServiceClient.createOrder(
-                userId, productId, quantity, amount);
+                userId, productId, quantity, amount, orderIdempotencyKey);
         UUID orderId = UUID.fromString(orderResponse.getOrderId());
         log.info("Order created via gRPC: orderId={}", orderId);
 

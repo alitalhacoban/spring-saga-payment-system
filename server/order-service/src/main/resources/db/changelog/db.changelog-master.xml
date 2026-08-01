@@ -7,5 +7,6 @@
 
     <include file="db/changelog/changes/001-create-orders-table.xml"/>
     <include file="db/changelog/changes/002-create-outbox-events-table.xml"/>
+    <include file="db/changelog/changes/003-add-idempotency-key-to-orders.xml"/>
 
 </databaseChangeLog>

@@ -26,11 +26,14 @@ public class OrderGrpcService extends OrderServiceGrpc.OrderServiceImplBase {
                 request.getUserId(), request.getProductId(),
                 request.getQuantity(), request.getPrice());
         try {
+            String idempotencyKey = request.getIdempotencyKey().isEmpty()
+                    ? null : request.getIdempotencyKey();
             Order order = orderService.createOrder(
                     request.getUserId(),
                     request.getProductId(),
                     request.getQuantity(),
-                    BigDecimal.valueOf(request.getPrice())
+                    BigDecimal.valueOf(request.getPrice()),
+                    idempotencyKey
             );
 
             CreateOrderResponse response = CreateOrderResponse.newBuilder()

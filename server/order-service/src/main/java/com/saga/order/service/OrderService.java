@@ -14,6 +14,7 @@ import com.saga.shared.kafka.KafkaTopics;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,7 +32,17 @@ public class OrderService {
     private final ObjectMapper objectMapper;
 
     @Transactional
-    public Order createOrder(String userId, String productId, Integer quantity, BigDecimal price) {
+    public Order createOrder(String userId, String productId, Integer quantity, BigDecimal price,
+                             String idempotencyKey) {
+        if (idempotencyKey != null) {
+            var existing = orderRepository.findByIdempotencyKey(idempotencyKey);
+            if (existing.isPresent()) {
+                log.info("Order creation skipped — idempotent replay: idempotencyKey={}, orderId={}",
+                        idempotencyKey, existing.get().getId());
+                return existing.get();
+            }
+        }
+
         BigDecimal totalAmount = price.multiply(BigDecimal.valueOf(quantity));
 
         Order order = Order.builder()
@@ -41,9 +52,18 @@ public class OrderService {
                 .price(price)
                 .totalAmount(totalAmount)
                 .status(OrderStatus.PENDING)
+                .idempotencyKey(idempotencyKey)
                 .build();
 
-        order = orderRepository.save(order);
+        try {
+            order = orderRepository.save(order);
+        } catch (DataIntegrityViolationException e) {
+            Order raced = orderRepository.findByIdempotencyKey(idempotencyKey)
+                    .orElseThrow(() -> e);
+            log.info("Order creation skipped — idempotent replay (race): idempotencyKey={}, orderId={}",
+                    idempotencyKey, raced.getId());
+            return raced;
+        }
         log.info("Order created: id={}, userId={}, productId={}", order.getId(), userId, productId);
 
         OrderCreatedEvent event = OrderCreatedEvent.builder()
