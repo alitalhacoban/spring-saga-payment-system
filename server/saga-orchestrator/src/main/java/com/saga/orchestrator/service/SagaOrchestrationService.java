@@ -23,11 +23,13 @@ import com.saga.shared.kafka.KafkaTopics;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -72,6 +74,12 @@ public class SagaOrchestrationService {
     private final ObjectMapper objectMapper;
     private final OrderServiceClient orderServiceClient;
     private final InventoryServiceClient inventoryServiceClient;
+
+    @Value("${saga.recovery.stuck-threshold-seconds:120}")
+    private long stuckThresholdSeconds;
+
+    @Value("${saga.recovery.max-attempts:5}")
+    private int maxRecoveryAttempts;
 
     @Transactional
     public SagaInstance startSaga(String userId, String productId,
@@ -149,6 +157,7 @@ public class SagaOrchestrationService {
         recordStep(saga, SagaStepName.STOCK_RESERVED, SagaStepStatus.COMPLETED, null);
         saga.setCurrentStep(SagaStepName.PAYMENT_PROCESSED);
         saga.setPayload(toJson(payload));
+        saga.setRecoveryAttempts(0);
         sagaInstanceRepository.save(saga);
         log.info("Saga [{}] STOCK_RESERVED → processing payment", saga.getId());
 
@@ -203,19 +212,11 @@ public class SagaOrchestrationService {
         saga.setCurrentStep(SagaStepName.STOCK_RELEASED);
         saga.setStatus(SagaStatus.COMPENSATING);
         saga.setPayload(toJson(payload));
+        saga.setRecoveryAttempts(0);
         sagaInstanceRepository.save(saga);
         log.warn("Saga [{}] payment FAILED → releasing stock", saga.getId());
 
-        StockReleaseCommand cmd = StockReleaseCommand.builder()
-                .eventId(UUID.randomUUID())
-                .sagaId(saga.getId())
-                .orderId(payload.getOrderId())
-                .reservationId(payload.getReservationId())
-                .reason(event.getReason())
-                .build();
-        cmd.init();
-        outboxEventRepository.save(toOutboxEvent(saga.getId(),
-                KafkaTopics.STOCK_RELEASE_REQUEST, payload.getOrderId().toString(), cmd));
+        publishStockReleaseCommand(saga, payload, event.getReason());
     }
 
     @Transactional
@@ -239,16 +240,88 @@ public class SagaOrchestrationService {
         sagaInstanceRepository.save(saga);
         log.info("Saga [{}] payment cancelled → releasing stock", saga.getId());
 
-        StockReleaseCommand cmd = StockReleaseCommand.builder()
-                .eventId(UUID.randomUUID())
-                .sagaId(saga.getId())
-                .orderId(payload.getOrderId())
-                .reservationId(payload.getReservationId())
-                .reason(event.getReason())
-                .build();
-        cmd.init();
-        outboxEventRepository.save(toOutboxEvent(saga.getId(),
-                KafkaTopics.STOCK_RELEASE_REQUEST, payload.getOrderId().toString(), cmd));
+        publishStockReleaseCommand(saga, payload, event.getReason());
+    }
+
+    // Resends are safe even if the original command was already processed — commands
+    // carry sagaId-scoped idempotency keys that downstream services dedupe on.
+    @Transactional
+    public boolean recoverNextStuckSaga() {
+        LocalDateTime staleBefore = LocalDateTime.now().minusSeconds(stuckThresholdSeconds);
+        Optional<SagaInstance> maybe = sagaInstanceRepository.claimNextStuck(staleBefore);
+        if (maybe.isEmpty()) {
+            return false;
+        }
+
+        SagaInstance saga = maybe.get();
+        SagaPayload payload = fromJson(saga.getPayload());
+
+        if (saga.getStatus() == SagaStatus.STARTED && saga.getCurrentStep() == SagaStepName.ORDER_CREATED) {
+            recoverOrderCreated(saga, payload);
+        } else if (saga.getStatus() == SagaStatus.STARTED && saga.getCurrentStep() == SagaStepName.PAYMENT_PROCESSED) {
+            recoverPaymentProcessed(saga, payload);
+        } else if (saga.getStatus() == SagaStatus.COMPENSATING && saga.getCurrentStep() == SagaStepName.STOCK_RELEASED) {
+            recoverStockReleased(saga, payload);
+        } else {
+            String reason = "Saga recovery: unrecognized stuck state (status=" + saga.getStatus()
+                    + ", currentStep=" + saga.getCurrentStep() + ")";
+            log.error("Saga [{}] {} — escalating immediately", saga.getId(), reason);
+            recordStep(saga, saga.getCurrentStep(), SagaStepStatus.FAILED, reason);
+            publishOrderCancelledAndFail(saga, payload.getOrderId(), reason);
+        }
+        return true;
+    }
+
+    private void recoverOrderCreated(SagaInstance saga, SagaPayload payload) {
+        saga.setRecoveryAttempts(saga.getRecoveryAttempts() + 1);
+        if (saga.getRecoveryAttempts() >= maxRecoveryAttempts) {
+            String reason = "Saga recovery: no stock reservation reply after " + maxRecoveryAttempts + " attempts";
+            log.error("Saga [{}] exhausted recovery attempts waiting on stock reservation — escalating to FAILED",
+                    saga.getId());
+            recordStep(saga, SagaStepName.STOCK_RESERVED, SagaStepStatus.FAILED, reason);
+            publishOrderCancelledAndFail(saga, payload.getOrderId(), reason);
+        } else {
+            sagaInstanceRepository.save(saga);
+            log.warn("Saga [{}] stuck waiting on stock reservation reply — resending StockReserveCommand (attempt {}/{})",
+                    saga.getId(), saga.getRecoveryAttempts(), maxRecoveryAttempts);
+            publishStockReserveCommand(saga.getId(), payload);
+        }
+    }
+
+    private void recoverPaymentProcessed(SagaInstance saga, SagaPayload payload) {
+        saga.setRecoveryAttempts(saga.getRecoveryAttempts() + 1);
+        if (saga.getRecoveryAttempts() >= maxRecoveryAttempts) {
+            String reason = "Saga recovery: no payment reply after " + maxRecoveryAttempts + " attempts";
+            log.error("Saga [{}] exhausted recovery attempts waiting on payment reply — starting compensation "
+                    + "(releasing stock) instead of failing directly, to avoid leaking the reservation", saga.getId());
+            recordStep(saga, SagaStepName.PAYMENT_PROCESSED, SagaStepStatus.FAILED, reason);
+            saga.setCurrentStep(SagaStepName.STOCK_RELEASED);
+            saga.setStatus(SagaStatus.COMPENSATING);
+            saga.setRecoveryAttempts(0);
+            sagaInstanceRepository.save(saga);
+            publishStockReleaseCommand(saga, payload, reason);
+        } else {
+            sagaInstanceRepository.save(saga);
+            log.warn("Saga [{}] stuck waiting on payment reply — resending PaymentProcessCommand (attempt {}/{})",
+                    saga.getId(), saga.getRecoveryAttempts(), maxRecoveryAttempts);
+            publishPaymentProcessCommand(saga.getId(), payload);
+        }
+    }
+
+    private void recoverStockReleased(SagaInstance saga, SagaPayload payload) {
+        saga.setRecoveryAttempts(saga.getRecoveryAttempts() + 1);
+        if (saga.getRecoveryAttempts() >= maxRecoveryAttempts) {
+            String reason = "Saga recovery: no stock release confirmation after " + maxRecoveryAttempts + " attempts";
+            log.error("Saga [{}] exhausted recovery attempts waiting on stock release confirmation — escalating to "
+                    + "FAILED (reservation may remain held; needs manual reconciliation)", saga.getId());
+            recordStep(saga, SagaStepName.STOCK_RELEASED, SagaStepStatus.FAILED, reason);
+            publishOrderCancelledAndFail(saga, payload.getOrderId(), reason);
+        } else {
+            sagaInstanceRepository.save(saga);
+            log.warn("Saga [{}] stuck waiting on stock release confirmation — resending StockReleaseCommand (attempt {}/{})",
+                    saga.getId(), saga.getRecoveryAttempts(), maxRecoveryAttempts);
+            publishStockReleaseCommand(saga, payload, "Saga recovery retry");
+        }
     }
 
     @Transactional(readOnly = true)
@@ -299,6 +372,20 @@ public class SagaOrchestrationService {
         outboxEventRepository.save(toOutboxEvent(sagaId,
                 KafkaTopics.PAYMENT_PROCESS_REQUEST, payload.getOrderId().toString(), cmd));
         log.info("Saga [{}] → enqueued PaymentProcessCommand to outbox", sagaId);
+    }
+
+    private void publishStockReleaseCommand(SagaInstance saga, SagaPayload payload, String reason) {
+        StockReleaseCommand cmd = StockReleaseCommand.builder()
+                .eventId(UUID.randomUUID())
+                .sagaId(saga.getId())
+                .orderId(payload.getOrderId())
+                .reservationId(payload.getReservationId())
+                .reason(reason)
+                .build();
+        cmd.init();
+        outboxEventRepository.save(toOutboxEvent(saga.getId(),
+                KafkaTopics.STOCK_RELEASE_REQUEST, payload.getOrderId().toString(), cmd));
+        log.info("Saga [{}] → enqueued StockReleaseCommand to outbox (reason={})", saga.getId(), reason);
     }
 
     private void publishOrderCancelledAndFail(SagaInstance saga, UUID orderId, String reason) {

@@ -45,6 +45,10 @@ public class SagaInstance {
     @Column(name = "idempotency_key")
     private String idempotencyKey;
 
+    @Column(name = "recovery_attempts", nullable = false)
+    @Builder.Default
+    private Integer recoveryAttempts = 0;
+
     @OneToMany(mappedBy = "sagaInstance", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @Builder.Default
     private List<SagaStep> steps = new ArrayList<>();
