@@ -32,6 +32,12 @@ public class SagaController {
                 request.userId(), request.productId(), request.quantity(),
                 request.unitPrice(), request.currency());
 
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            log.warn("Saga start rejected: missing Idempotency-Key header");
+            return ResponseEntity.badRequest()
+                    .body(new StartOrderResponse(null, null, null, "Idempotency-Key header is required."));
+        }
+
         boolean isReplay = orchestrationService.findByIdempotencyKey(idempotencyKey).isPresent();
 
         SagaInstance saga = orchestrationService.startSaga(
