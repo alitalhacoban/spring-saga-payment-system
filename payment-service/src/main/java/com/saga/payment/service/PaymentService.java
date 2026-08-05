@@ -47,7 +47,7 @@ public class PaymentService {
                 if (!requestHash.equals(existing.get().getRequestHash())) {
                     throw new IdempotencyConflictException(
                             "Idempotency key reused with a different request: " + idempotencyKey);
-                }why
+                }
                 log.info("Payment processing skipped — idempotent replay: idempotencyKey={}, paymentId={}",
                         idempotencyKey, existing.get().getId());
                 return existing.get();

@@ -38,6 +38,11 @@ public class OutboxEventProcessor {
         try {
             Class<?> eventClass = Class.forName(row.getEventType());
             Object event = objectMapper.readValue(row.getPayload(), eventClass);
+            // Send happens before this transaction commits: if the process crashes or the
+            // commit fails after the broker acks this send, the row stays PENDING and is
+            // resent on the next poll. Broker-level idempotence doesn't cover this (it's a
+            // new logical send, not a retry) — duplicates are absorbed by the idempotency-key
+            // checks on the consuming side instead.
             kafkaTemplate.send(row.getTopic(), row.getKafkaKey(), event)
                     .get(sendTimeoutMs, TimeUnit.MILLISECONDS);
 
