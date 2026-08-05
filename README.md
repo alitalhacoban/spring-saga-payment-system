@@ -146,7 +146,7 @@ sequenceDiagram
 
 Java 17 · Spring Boot 3.2.3 · Apache Kafka (Confluent 7.5.0) · gRPC 1.63.0 / Protobuf 3.25.1 · PostgreSQL 16 · Spring Data JPA/Hibernate · Liquibase · Spring Retry · Maven · Docker Compose · Lombok/Jackson
 
-No shared Maven reactor — each service is an independent Maven project depending on `server/shared` (gRPC contracts + Kafka event classes), which must be installed locally first.
+No shared Maven reactor — each service is an independent Maven project depending on `shared` (gRPC contracts + Kafka event classes), which must be installed locally first.
 
 ---
 
@@ -154,16 +154,16 @@ No shared Maven reactor — each service is an independent Maven project dependi
 
 ```bash
 # 1. Build the shared module
-cd server/shared && mvn install
+cd shared && mvn install
 
 # 2. Start infrastructure (Postgres x4, Kafka, Zookeeper)
-cd server && docker-compose up -d
+docker-compose up -d
 
 # 3. Start each service (separate terminals)
-cd server/order-service && mvn spring-boot:run
-cd server/inventory-service && mvn spring-boot:run
-cd server/payment-service && mvn spring-boot:run
-cd server/saga-orchestrator && mvn spring-boot:run
+cd order-service && mvn spring-boot:run
+cd inventory-service && mvn spring-boot:run
+cd payment-service && mvn spring-boot:run
+cd saga-orchestrator && mvn spring-boot:run
 ```
 
 Place an order:
@@ -177,7 +177,7 @@ curl -X POST http://localhost:8084/api/orders \
 
 Then check status with `curl http://localhost:8084/api/sagas/{sagaId}`, and watch topics via Kafka UI at [localhost:8090](http://localhost:8090).
 
-A full Postman collection (happy path + both compensation scenarios) is at `server/saga-payment-system.postman_collection.json`.
+A full Postman collection (happy path + both compensation scenarios) is at `saga-payment-system.postman_collection.json`.
 
 ---
 
