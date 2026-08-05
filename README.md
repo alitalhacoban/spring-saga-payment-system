@@ -146,15 +146,21 @@ sequenceDiagram
 
 Java 17 · Spring Boot 3.2.3 · Apache Kafka (Confluent 7.5.0) · gRPC 1.63.0 / Protobuf 3.25.1 · PostgreSQL 16 · Spring Data JPA/Hibernate · Liquibase · Spring Retry · Maven · Docker Compose · Lombok/Jackson
 
-No shared Maven reactor — each service is an independent Maven project depending on `shared` (gRPC contracts + Kafka event classes), which must be installed locally first.
+A root `pom.xml` aggregates all five modules (`shared` + the four services) into one Maven reactor, purely for build ordering and IDE import — each service still inherits `spring-boot-starter-parent` directly and depends on `shared` (gRPC contracts + Kafka event classes) as a regular Maven dependency.
 
 ---
 
 ## Running the Project
 
+### From an IDE (IntelliJ)
+
+Open the repo root — the reactor `pom.xml` makes IntelliJ auto-import all five modules (source roots, dependencies, detected `@SpringBootApplication` classes) in one shot. Run/debug each `*Application` main class directly; no manual `shared` install needed since IntelliJ resolves it as a project module dependency.
+
+### From the command line
+
 ```bash
-# 1. Build the shared module
-cd shared && mvn install
+# 1. Build everything (shared is built first automatically, reactor resolves the order)
+mvn install
 
 # 2. Start infrastructure (Postgres x4, Kafka, Zookeeper)
 docker-compose up -d
