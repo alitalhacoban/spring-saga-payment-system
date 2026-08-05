@@ -15,7 +15,9 @@ import com.saga.shared.event.BaseEvent;
 import com.saga.shared.event.StockReleasedEvent;
 import com.saga.shared.event.StockReservationFailedEvent;
 import com.saga.shared.event.StockReservedEvent;
+import com.saga.shared.exception.IdempotencyConflictException;
 import com.saga.shared.kafka.KafkaTopics;
+import com.saga.shared.util.RequestHashUtil;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -40,9 +42,14 @@ public class InventoryService {
     @Transactional
     public StockReservation reserveStock(UUID sagaId, String orderId, UUID productId, Integer quantity,
                                          String idempotencyKey) {
+        String requestHash = RequestHashUtil.sha256(orderId, productId, quantity);
         if (idempotencyKey != null) {
             var existing = reservationRepository.findByIdempotencyKey(idempotencyKey);
             if (existing.isPresent()) {
+                if (!requestHash.equals(existing.get().getRequestHash())) {
+                    throw new IdempotencyConflictException(
+                            "Idempotency key reused with a different request: " + idempotencyKey);
+                }
                 log.info("Stock reservation skipped — idempotent replay: idempotencyKey={}, reservationId={}",
                         idempotencyKey, existing.get().getId());
                 return existing.get();
@@ -81,12 +88,17 @@ public class InventoryService {
                 .quantity(quantity)
                 .status(ReservationStatus.RESERVED)
                 .idempotencyKey(idempotencyKey)
+                .requestHash(requestHash)
                 .build();
         try {
             reservation = reservationRepository.save(reservation);
         } catch (DataIntegrityViolationException e) {
             StockReservation raced = reservationRepository.findByIdempotencyKey(idempotencyKey)
                     .orElseThrow(() -> e);
+            if (!requestHash.equals(raced.getRequestHash())) {
+                throw new IdempotencyConflictException(
+                        "Idempotency key reused with a different request: " + idempotencyKey);
+            }
             log.info("Stock reservation skipped — idempotent replay (race): idempotencyKey={}, reservationId={}",
                     idempotencyKey, raced.getId());
             return raced;

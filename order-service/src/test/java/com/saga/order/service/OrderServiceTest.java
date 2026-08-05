@@ -6,6 +6,7 @@ import com.saga.order.entity.Order;
 import com.saga.order.entity.enums.OrderStatus;
 import com.saga.order.repository.OrderRepository;
 import com.saga.order.repository.OutboxEventRepository;
+import com.saga.shared.util.RequestHashUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -88,6 +89,7 @@ class OrderServiceTest {
                 .totalAmount(BigDecimal.valueOf(20))
                 .status(OrderStatus.PENDING)
                 .idempotencyKey(idempotencyKey)
+                .requestHash(RequestHashUtil.sha256("user-1", "product-1", 2, BigDecimal.TEN))
                 .build();
         when(orderRepository.findByIdempotencyKey(idempotencyKey)).thenReturn(Optional.of(existing));
 
@@ -110,6 +112,7 @@ class OrderServiceTest {
                 .totalAmount(BigDecimal.valueOf(20))
                 .status(OrderStatus.PENDING)
                 .idempotencyKey(idempotencyKey)
+                .requestHash(RequestHashUtil.sha256("user-1", "product-1", 2, BigDecimal.TEN))
                 .build();
         when(orderRepository.findByIdempotencyKey(idempotencyKey))
                 .thenReturn(Optional.empty())

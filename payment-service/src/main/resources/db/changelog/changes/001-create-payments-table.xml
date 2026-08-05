@@ -28,6 +28,7 @@
                 <constraints nullable="false"/>
             </column>
             <column name="failure_reason" type="VARCHAR(500)"/>
+            <column name="request_hash" type="VARCHAR(64)"/>
             <column name="created_at" type="TIMESTAMP" defaultValueComputed="NOW()">
                 <constraints nullable="false"/>
             </column>

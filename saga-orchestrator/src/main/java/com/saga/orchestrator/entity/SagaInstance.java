@@ -45,6 +45,9 @@ public class SagaInstance {
     @Column(name = "idempotency_key")
     private String idempotencyKey;
 
+    @Column(name = "request_hash", length = 64)
+    private String requestHash;
+
     @Column(name = "recovery_attempts", nullable = false)
     @Builder.Default
     private Integer recoveryAttempts = 0;

@@ -10,7 +10,9 @@ import com.saga.order.repository.OrderRepository;
 import com.saga.order.repository.OutboxEventRepository;
 import com.saga.shared.event.BaseEvent;
 import com.saga.shared.event.OrderCreatedEvent;
+import com.saga.shared.exception.IdempotencyConflictException;
 import com.saga.shared.kafka.KafkaTopics;
+import com.saga.shared.util.RequestHashUtil;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,9 +36,14 @@ public class OrderService {
     @Transactional
     public Order createOrder(String userId, String productId, Integer quantity, BigDecimal unitPrice,
                              String idempotencyKey) {
+        String requestHash = RequestHashUtil.sha256(userId, productId, quantity, unitPrice);
         if (idempotencyKey != null) {
             var existing = orderRepository.findByIdempotencyKey(idempotencyKey);
             if (existing.isPresent()) {
+                if (!requestHash.equals(existing.get().getRequestHash())) {
+                    throw new IdempotencyConflictException(
+                            "Idempotency key reused with a different request: " + idempotencyKey);
+                }
                 log.info("Order creation skipped — idempotent replay: idempotencyKey={}, orderId={}",
                         idempotencyKey, existing.get().getId());
                 return existing.get();
@@ -53,6 +60,7 @@ public class OrderService {
                 .totalAmount(totalAmount)
                 .status(OrderStatus.PENDING)
                 .idempotencyKey(idempotencyKey)
+                .requestHash(requestHash)
                 .build();
 
         try {
@@ -60,6 +68,10 @@ public class OrderService {
         } catch (DataIntegrityViolationException e) {
             Order raced = orderRepository.findByIdempotencyKey(idempotencyKey)
                     .orElseThrow(() -> e);
+            if (!requestHash.equals(raced.getRequestHash())) {
+                throw new IdempotencyConflictException(
+                        "Idempotency key reused with a different request: " + idempotencyKey);
+            }
             log.info("Order creation skipped — idempotent replay (race): idempotencyKey={}, orderId={}",
                     idempotencyKey, raced.getId());
             return raced;

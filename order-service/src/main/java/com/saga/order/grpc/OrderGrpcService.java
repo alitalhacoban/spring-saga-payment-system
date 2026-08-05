@@ -2,6 +2,7 @@ package com.saga.order.grpc;
 
 import com.saga.order.entity.Order;
 import com.saga.order.service.OrderService;
+import com.saga.shared.exception.IdempotencyConflictException;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import jakarta.persistence.EntityNotFoundException;
@@ -45,6 +46,10 @@ public class OrderGrpcService extends OrderServiceGrpc.OrderServiceImplBase {
 
             responseObserver.onNext(response);
             responseObserver.onCompleted();
+        } catch (IdempotencyConflictException e) {
+            responseObserver.onError(
+                    Status.ALREADY_EXISTS.withDescription(e.getMessage()).asRuntimeException()
+            );
         } catch (Exception e) {
             log.error("createOrder failed: {}", e.getMessage(), e);
             responseObserver.onError(

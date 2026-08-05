@@ -24,6 +24,7 @@
             </column>
             <!-- JSON payload with saga context data -->
             <column name="payload" type="TEXT"/>
+            <column name="request_hash" type="VARCHAR(64)"/>
             <column name="created_at" type="TIMESTAMP" defaultValueComputed="NOW()">
                 <constraints nullable="false"/>
             </column>

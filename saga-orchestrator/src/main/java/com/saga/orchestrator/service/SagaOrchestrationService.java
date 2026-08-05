@@ -19,7 +19,9 @@ import com.saga.orchestrator.repository.OutboxEventRepository;
 import com.saga.orchestrator.repository.SagaInstanceRepository;
 import com.saga.orchestrator.repository.SagaStepRepository;
 import com.saga.shared.event.*;
+import com.saga.shared.exception.IdempotencyConflictException;
 import com.saga.shared.kafka.KafkaTopics;
+import com.saga.shared.util.RequestHashUtil;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -86,9 +88,14 @@ public class SagaOrchestrationService {
                                   Integer quantity, BigDecimal unitPrice, String currency,
                                   String idempotencyKey) {
 
+        String requestHash = RequestHashUtil.sha256(userId, productId, quantity, unitPrice, currency);
         if (idempotencyKey != null) {
             var existing = sagaInstanceRepository.findByIdempotencyKey(idempotencyKey);
             if (existing.isPresent()) {
+                if (!requestHash.equals(existing.get().getRequestHash())) {
+                    throw new IdempotencyConflictException(
+                            "Idempotency key reused with a different request: " + idempotencyKey);
+                }
                 log.info("Saga start skipped — idempotent replay: idempotencyKey={}, sagaId={}",
                         idempotencyKey, existing.get().getId());
                 return existing.get();
@@ -131,12 +138,17 @@ public class SagaOrchestrationService {
                 .status(SagaStatus.STARTED)
                 .payload(toJson(payload))
                 .idempotencyKey(idempotencyKey)
+                .requestHash(requestHash)
                 .build();
         try {
             saga = sagaInstanceRepository.save(saga);
         } catch (DataIntegrityViolationException e) {
             SagaInstance raced = sagaInstanceRepository.findByIdempotencyKey(idempotencyKey)
                     .orElseThrow(() -> e);
+            if (!requestHash.equals(raced.getRequestHash())) {
+                throw new IdempotencyConflictException(
+                        "Idempotency key reused with a different request: " + idempotencyKey);
+            }
             log.info("Saga start skipped — idempotent replay (race): idempotencyKey={}, sagaId={}",
                     idempotencyKey, raced.getId());
             return raced;

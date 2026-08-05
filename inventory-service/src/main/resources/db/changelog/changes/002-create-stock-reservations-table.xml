@@ -26,6 +26,7 @@
             <column name="status" type="VARCHAR(50)" defaultValue="RESERVED">
                 <constraints nullable="false"/>
             </column>
+            <column name="request_hash" type="VARCHAR(64)"/>
             <column name="created_at" type="TIMESTAMP" defaultValueComputed="NOW()">
                 <constraints nullable="false"/>
             </column>

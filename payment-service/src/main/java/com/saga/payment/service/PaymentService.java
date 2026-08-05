@@ -14,7 +14,9 @@ import com.saga.shared.event.BaseEvent;
 import com.saga.shared.event.PaymentCancelledEvent;
 import com.saga.shared.event.PaymentFailedEvent;
 import com.saga.shared.event.PaymentProcessedEvent;
+import com.saga.shared.exception.IdempotencyConflictException;
 import com.saga.shared.kafka.KafkaTopics;
+import com.saga.shared.util.RequestHashUtil;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,9 +40,14 @@ public class PaymentService {
     @Transactional
     public Payment processPayment(UUID sagaId, String orderId, String userId,
                                   BigDecimal totalAmount, String currency, String idempotencyKey) {
+        String requestHash = RequestHashUtil.sha256(orderId, userId, totalAmount, currency);
         if (idempotencyKey != null) {
             var existing = paymentRepository.findByIdempotencyKey(idempotencyKey);
             if (existing.isPresent()) {
+                if (!requestHash.equals(existing.get().getRequestHash())) {
+                    throw new IdempotencyConflictException(
+                            "Idempotency key reused with a different request: " + idempotencyKey);
+                }why
                 log.info("Payment processing skipped — idempotent replay: idempotencyKey={}, paymentId={}",
                         idempotencyKey, existing.get().getId());
                 return existing.get();
@@ -65,12 +72,17 @@ public class PaymentService {
                 .currency(currency)
                 .status(PaymentStatus.PENDING)
                 .idempotencyKey(idempotencyKey)
+                .requestHash(requestHash)
                 .build();
         try {
             payment = paymentRepository.save(payment);
         } catch (DataIntegrityViolationException e) {
             Payment raced = paymentRepository.findByIdempotencyKey(idempotencyKey)
                     .orElseThrow(() -> e);
+            if (!requestHash.equals(raced.getRequestHash())) {
+                throw new IdempotencyConflictException(
+                        "Idempotency key reused with a different request: " + idempotencyKey);
+            }
             log.info("Payment processing skipped — idempotent replay (race): idempotencyKey={}, paymentId={}",
                     idempotencyKey, raced.getId());
             return raced;

@@ -41,6 +41,9 @@ public class StockReservation {
     @Column(name = "idempotency_key")
     private String idempotencyKey;
 
+    @Column(name = "request_hash", length = 64)
+    private String requestHash;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
