@@ -59,6 +59,7 @@ public class KafkaConfig {
     }
 
     // ─── Order ───────────────────────────────────────────────────────────────
+    @Bean public NewTopic orderCreateRequest() { return topic(KafkaTopics.ORDER_CREATE_REQUEST); }
     @Bean public NewTopic orderCreated()   { return topic(KafkaTopics.ORDER_CREATED); }
     @Bean public NewTopic orderConfirmed() { return topic(KafkaTopics.ORDER_CONFIRMED); }
     @Bean public NewTopic orderCancelled() { return topic(KafkaTopics.ORDER_CANCELLED); }

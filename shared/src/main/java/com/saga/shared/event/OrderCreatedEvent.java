@@ -12,7 +12,7 @@ import java.util.UUID;
 
 /**
  * Published by order-service when a new order is created.
- * Consumed by saga-orchestrator to start the saga.
+ * Consumed by saga-orchestrator to confirm ORDER_CREATE_REQUESTED and proceed to stock reservation.
  */
 @Data
 @SuperBuilder

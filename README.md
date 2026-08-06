@@ -30,7 +30,6 @@ flowchart TB
     Kafka[["Kafka"]]
 
     Client -- "REST" --> Orchestrator
-    Orchestrator -- "gRPC (sync lookups)" --> Order
     Orchestrator -- "gRPC (sync lookups)" --> Inventory
     Orchestrator <-- "commands / events" --> Kafka
     Kafka <--> Order
@@ -54,7 +53,8 @@ sequenceDiagram
 
     Client->>Orchestrator: POST /api/orders
     Orchestrator->>Inventory: gRPC CheckStock / GetProduct
-    Orchestrator->>Order: gRPC CreateOrder (PENDING)
+    Orchestrator->>Order: order.create.request
+    Order-->>Orchestrator: order.created
     Orchestrator->>Inventory: stock.reserve.request
     Inventory-->>Orchestrator: stock.reserved
     Orchestrator->>Payment: payment.process.request
@@ -103,7 +103,7 @@ sequenceDiagram
 | Mechanism | What it does | Key config |
 |---|---|---|
 | Transactional outbox | Domain write + outbox row commit in one local transaction; a poller claims rows with `FOR UPDATE SKIP LOCKED` and publishes to Kafka, retrying with backoff | `outbox.poller.fixed-delay-ms=2000`, `batch-size=50` |
-| Idempotency keys | Order/payment/stock/saga writes look up by key first, replay on duplicate; orchestrator derives per-step keys (`<sagaId>:PAYMENT_PROCESS`, etc.) | `Idempotency-Key` header on `POST /api/orders` |
+| Idempotency keys | Order/payment/stock/saga writes look up by key first, replay on duplicate; orchestrator derives per-step keys (`<sagaId>:ORDER_CREATE`, `<sagaId>:PAYMENT_PROCESS`, etc.) | `Idempotency-Key` header on `POST /api/orders` |
 | Kafka retry + DLQ | Failed consumer messages retry with backoff, then land on `<topic>.DLT` instead of blocking the consumer group | 3 retries, 500ms initial backoff |
 | Stuck saga recovery | Scheduler claims stale `STARTED`/`COMPENSATING` sagas and resends the missing command, escalating to compensation after max attempts | `saga.recovery.stuck-threshold-seconds=120`, `max-attempts=5` |
 
@@ -115,6 +115,8 @@ sequenceDiagram
 
 | Topic | Publisher → Consumer | Purpose |
 |---|---|---|
+| `order.create.request` | Orchestrator → Order | Request order creation (orchestrator pre-generates orderId) |
+| `order.created` | Order → Orchestrator | Order created; confirms authoritative `totalAmount` |
 | `stock.reserve.request` | Orchestrator → Inventory | Reserve stock |
 | `stock.reserved` | Inventory → Orchestrator | Stock reserved |
 | `stock.reservation.failed` | Inventory → Orchestrator | Not enough stock |
@@ -189,7 +191,8 @@ A full Postman collection (happy path + both compensation scenarios) is at `saga
 
 ## Notes
 
-- **Amount contract:** `totalAmount = unitPrice x quantity`, calculated by order-service, charged verbatim by payment-service.
+- **Amount contract:** `totalAmount = unitPrice x quantity`, calculated by order-service, charged verbatim by payment-service. The orchestrator computes the same formula locally as a provisional placeholder the instant the saga starts (before order-service has even seen the request), then overwrites it with order-service's authoritative value once `order.created` arrives — only the authoritative value is ever sent to payment-service.
+- **Order creation is async:** like stock reservation and payment, order creation goes through the transactional outbox (`order.create.request` → `order.created`) rather than a direct synchronous call, specifically so an orchestrator-side failure between persisting the saga and dispatching the command can never leave an orphaned order in order-service with no saga to reference it. The orchestrator pre-generates `orderId` (like it already does for `sagaId`) so `POST /api/orders` can still return it synchronously.
 - **Concurrency:** Inventory uses pessimistic locking to prevent over-reservation.
 - **Saga audit trail:** every step is persisted in `saga_steps`; `recovery_attempts` tracks recovery interventions.
 - **Schema:** managed via Liquibase, auto-applied on startup.

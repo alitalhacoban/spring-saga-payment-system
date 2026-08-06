@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.springframework.data.domain.Persistable;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -16,10 +17,13 @@ import java.util.UUID;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class Order {
+public class Order implements Persistable<UUID> {
 
+    // Externally assigned by saga-orchestrator (mirrors how it generates sagaId) so the
+    // orderId can be returned synchronously from POST /api/orders before order-service's
+    // async reply ever arrives. No @GeneratedValue: Persistable.isNew() below drives
+    // insert-vs-merge instead of relying on a null id.
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
     @Column(name = "id", updatable = false, nullable = false)
     private UUID id;
 
@@ -56,4 +60,9 @@ public class Order {
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
+
+    @Override
+    public boolean isNew() {
+        return createdAt == null;
+    }
 }

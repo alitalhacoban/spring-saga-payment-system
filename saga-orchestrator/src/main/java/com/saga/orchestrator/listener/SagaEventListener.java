@@ -15,6 +15,14 @@ public class SagaEventListener {
 
     private final SagaOrchestrationService orchestrationService;
 
+    @KafkaListener(topics = KafkaTopics.ORDER_CREATED,
+                   groupId = "${spring.kafka.consumer.group-id}")
+    public void onOrderCreated(OrderCreatedEvent event) {
+        log.info("← order.created: sagaId={}, orderId={}, totalAmount={}",
+                event.getSagaId(), event.getOrderId(), event.getTotalAmount());
+        orchestrationService.processOrderCreated(event);
+    }
+
     @KafkaListener(topics = KafkaTopics.STOCK_RESERVED,
                    groupId = "${spring.kafka.consumer.group-id}")
     public void onStockReserved(StockReservedEvent event) {

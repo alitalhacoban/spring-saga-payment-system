@@ -8,24 +8,8 @@ option java_outer_classname = "OrderProto";
 
 // ─── Order Service gRPC Definition ───────────────────────────────────────────
 service OrderService {
-  rpc CreateOrder       (CreateOrderRequest)       returns (CreateOrderResponse);
   rpc UpdateOrderStatus (UpdateOrderStatusRequest) returns (UpdateOrderStatusResponse);
   rpc GetOrder          (GetOrderRequest)          returns (GetOrderResponse);
-}
-
-message CreateOrderRequest {
-  string user_id    = 1;
-  string product_id = 2;
-  int32  quantity   = 3;
-  double unit_price = 4;
-  string idempotency_key = 5;  // optional; empty string = not supplied
-}
-
-message CreateOrderResponse {
-  string order_id = 1;
-  string status   = 2;  // PENDING | CONFIRMED | FAILED
-  string message  = 3;
-  double total_amount = 4;
 }
 
 message UpdateOrderStatusRequest {

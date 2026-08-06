@@ -7,14 +7,14 @@ import com.saga.orchestrator.entity.SagaInstance;
 import com.saga.orchestrator.entity.enums.SagaStatus;
 import com.saga.orchestrator.entity.enums.SagaStepName;
 import com.saga.orchestrator.grpc.InventoryServiceClient;
-import com.saga.orchestrator.grpc.OrderServiceClient;
 import com.saga.orchestrator.model.SagaPayload;
 import com.saga.orchestrator.repository.OutboxEventRepository;
 import com.saga.orchestrator.repository.SagaInstanceRepository;
 import com.saga.orchestrator.repository.SagaStepRepository;
 import com.saga.inventory.grpc.CheckStockResponse;
 import com.saga.inventory.grpc.GetProductResponse;
-import com.saga.order.grpc.CreateOrderResponse;
+import com.saga.shared.event.OrderCreateCommand;
+import com.saga.shared.event.OrderCreatedEvent;
 import com.saga.shared.event.PaymentFailedEvent;
 import com.saga.shared.event.PaymentProcessCommand;
 import com.saga.shared.event.StockReservedEvent;
@@ -47,8 +47,6 @@ class SagaOrchestrationServiceTest {
     @Mock
     private OutboxEventRepository outboxEventRepository;
     @Mock
-    private OrderServiceClient orderServiceClient;
-    @Mock
     private InventoryServiceClient inventoryServiceClient;
 
     private ObjectMapper objectMapper;
@@ -58,7 +56,7 @@ class SagaOrchestrationServiceTest {
     void setUp() {
         objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
         sagaOrchestrationService = new SagaOrchestrationService(sagaInstanceRepository, sagaStepRepository,
-                outboxEventRepository, objectMapper, orderServiceClient, inventoryServiceClient);
+                outboxEventRepository, objectMapper, inventoryServiceClient);
         ReflectionTestUtils.setField(sagaOrchestrationService, "stuckThresholdSeconds", 120L);
         ReflectionTestUtils.setField(sagaOrchestrationService, "maxRecoveryAttempts", 5);
     }
@@ -91,19 +89,12 @@ class SagaOrchestrationServiceTest {
     }
 
     @Test
-    void startSaga_usesOrderServiceTotalAsCanonicalPaymentTotal() throws Exception {
+    void startSaga_persistsSagaAndDispatchesOrderCreateCommandWithProvisionalTotal() throws Exception {
         String productId = UUID.randomUUID().toString();
         when(inventoryServiceClient.checkStock(productId, 2)).thenReturn(
                 CheckStockResponse.newBuilder().setAvailable(true).build());
         when(inventoryServiceClient.getProduct(productId)).thenReturn(
                 GetProductResponse.newBuilder().setName("Product").build());
-        when(orderServiceClient.createOrder(
-                "user-1", productId, 2, new BigDecimal("10.00"), null)).thenReturn(
-                CreateOrderResponse.newBuilder()
-                        .setOrderId(UUID.randomUUID().toString())
-                        .setStatus("PENDING")
-                        .setTotalAmount(20.00)
-                        .build());
         when(sagaInstanceRepository.save(any(SagaInstance.class))).thenAnswer(invocation -> {
             SagaInstance saga = invocation.getArgument(0);
             saga.setId(UUID.randomUUID());
@@ -113,9 +104,75 @@ class SagaOrchestrationServiceTest {
         SagaInstance saga = sagaOrchestrationService.startSaga(
                 "user-1", productId, 2, new BigDecimal("10.00"), "USD", null);
 
+        assertThat(saga.getCurrentStep()).isEqualTo(SagaStepName.ORDER_CREATE_REQUESTED);
+        assertThat(saga.getStatus()).isEqualTo(SagaStatus.STARTED);
         SagaPayload payload = objectMapper.readValue(saga.getPayload(), SagaPayload.class);
+        assertThat(payload.getOrderId()).isNotNull();
         assertThat(payload.getUnitPrice()).isEqualByComparingTo("10.00");
         assertThat(payload.getTotalAmount()).isEqualByComparingTo("20.00");
+
+        ArgumentCaptor<OutboxEvent> captor = ArgumentCaptor.forClass(OutboxEvent.class);
+        verify(outboxEventRepository).save(captor.capture());
+        assertThat(captor.getValue().getTopic()).isEqualTo(KafkaTopics.ORDER_CREATE_REQUEST);
+        OrderCreateCommand command = objectMapper.readValue(captor.getValue().getPayload(), OrderCreateCommand.class);
+        assertThat(command.getOrderId()).isEqualTo(payload.getOrderId());
+        assertThat(command.getUnitPrice()).isEqualByComparingTo("10.00");
+    }
+
+    @Test
+    void processOrderCreated_advancesToOrderCreatedAndDispatchesStockReserveCommandWithAuthoritativeTotal() throws Exception {
+        SagaInstance saga = stuckSaga(SagaStatus.STARTED, SagaStepName.ORDER_CREATE_REQUESTED, 3);
+        UUID sagaId = saga.getId();
+        when(sagaInstanceRepository.findById(sagaId)).thenReturn(Optional.of(saga));
+
+        OrderCreatedEvent event = OrderCreatedEvent.builder()
+                .eventId(UUID.randomUUID())
+                .sagaId(sagaId)
+                .orderId(UUID.fromString(saga.getOrderId()))
+                .totalAmount(new BigDecimal("999.99"))
+                .build();
+        event.init();
+
+        sagaOrchestrationService.processOrderCreated(event);
+
+        assertThat(saga.getCurrentStep()).isEqualTo(SagaStepName.ORDER_CREATED);
+        assertThat(saga.getRecoveryAttempts()).isEqualTo(0);
+        SagaPayload payload = objectMapper.readValue(saga.getPayload(), SagaPayload.class);
+        assertThat(payload.getTotalAmount()).isEqualByComparingTo("999.99");
+
+        ArgumentCaptor<OutboxEvent> captor = ArgumentCaptor.forClass(OutboxEvent.class);
+        verify(outboxEventRepository).save(captor.capture());
+        assertThat(captor.getValue().getTopic()).isEqualTo(KafkaTopics.STOCK_RESERVE_REQUEST);
+    }
+
+    @Test
+    void recoverNextStuckSaga_whenStuckAtOrderCreateRequestedUnderMaxAttempts_resendsOrderCreateCommandAndIncrementsAttempts() {
+        SagaInstance saga = stuckSaga(SagaStatus.STARTED, SagaStepName.ORDER_CREATE_REQUESTED, 1);
+        when(sagaInstanceRepository.claimNextStuck(any())).thenReturn(Optional.of(saga));
+
+        boolean result = sagaOrchestrationService.recoverNextStuckSaga();
+
+        assertThat(result).isTrue();
+        assertThat(saga.getRecoveryAttempts()).isEqualTo(2);
+        assertThat(saga.getStatus()).isEqualTo(SagaStatus.STARTED);
+        ArgumentCaptor<OutboxEvent> captor = ArgumentCaptor.forClass(OutboxEvent.class);
+        verify(outboxEventRepository).save(captor.capture());
+        assertThat(captor.getValue().getTopic()).isEqualTo(KafkaTopics.ORDER_CREATE_REQUEST);
+    }
+
+    @Test
+    void recoverNextStuckSaga_whenStuckAtOrderCreateRequestedAtMaxAttempts_escalatesViaOrderCancelledAndFail() {
+        SagaInstance saga = stuckSaga(SagaStatus.STARTED, SagaStepName.ORDER_CREATE_REQUESTED, 4);
+        when(sagaInstanceRepository.claimNextStuck(any())).thenReturn(Optional.of(saga));
+
+        boolean result = sagaOrchestrationService.recoverNextStuckSaga();
+
+        assertThat(result).isTrue();
+        assertThat(saga.getStatus()).isEqualTo(SagaStatus.FAILED);
+        assertThat(saga.getCurrentStep()).isEqualTo(SagaStepName.ORDER_CANCELLED);
+        ArgumentCaptor<OutboxEvent> captor = ArgumentCaptor.forClass(OutboxEvent.class);
+        verify(outboxEventRepository).save(captor.capture());
+        assertThat(captor.getValue().getTopic()).isEqualTo(KafkaTopics.ORDER_CANCELLED);
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.saga.orchestrator.entity.enums;
 
 public enum SagaStepName {
+    ORDER_CREATE_REQUESTED,
     ORDER_CREATED,
     STOCK_RESERVED,
     PAYMENT_PROCESSED,

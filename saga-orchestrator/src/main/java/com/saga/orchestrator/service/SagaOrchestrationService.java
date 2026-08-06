@@ -4,7 +4,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.saga.inventory.grpc.CheckStockResponse;
 import com.saga.inventory.grpc.GetProductResponse;
-import com.saga.order.grpc.CreateOrderResponse;
 import com.saga.orchestrator.entity.SagaInstance;
 import com.saga.orchestrator.entity.SagaStep;
 import com.saga.orchestrator.entity.enums.SagaStatus;
@@ -13,7 +12,6 @@ import com.saga.orchestrator.entity.enums.SagaStepStatus;
 import com.saga.orchestrator.entity.OutboxEvent;
 import com.saga.orchestrator.entity.enums.OutboxStatus;
 import com.saga.orchestrator.grpc.InventoryServiceClient;
-import com.saga.orchestrator.grpc.OrderServiceClient;
 import com.saga.orchestrator.model.SagaPayload;
 import com.saga.orchestrator.repository.OutboxEventRepository;
 import com.saga.orchestrator.repository.SagaInstanceRepository;
@@ -41,7 +39,8 @@ import java.util.UUID;
  *
  * Forward flow:
  *   startSaga()
- *     → gRPC → order-service.createOrder()
+ *     → Kafka → order.create.request
+ *     → [SagaEventListener.onOrderCreated()]
  *     → Kafka → stock.reserve.request
  *     → [SagaEventListener.onStockReserved()]
  *     → Kafka → payment.process.request
@@ -74,7 +73,6 @@ public class SagaOrchestrationService {
     private final SagaStepRepository sagaStepRepository;
     private final OutboxEventRepository outboxEventRepository;
     private final ObjectMapper objectMapper;
-    private final OrderServiceClient orderServiceClient;
     private final InventoryServiceClient inventoryServiceClient;
 
     @Value("${saga.recovery.stuck-threshold-seconds:120}")
@@ -113,28 +111,26 @@ public class SagaOrchestrationService {
         log.info("Product validated via gRPC: name='{}', availableQty={}",
                 productInfo.getName(), productInfo.getAvailableQuantity());
 
-        String orderIdempotencyKey = idempotencyKey != null
-                ? idempotencyKey + ":" + STEP_ORDER_CREATE
-                : null;
-        CreateOrderResponse orderResponse = orderServiceClient.createOrder(
-                userId, productId, quantity, unitPrice, orderIdempotencyKey);
-        UUID orderId = UUID.fromString(orderResponse.getOrderId());
-        BigDecimal totalAmount = BigDecimal.valueOf(orderResponse.getTotalAmount());
-        log.info("Order created via gRPC: orderId={}, totalAmount={}", orderId, totalAmount);
+        // Pre-generated here (like sagaId) so it can be returned synchronously from
+        // POST /api/orders even though order-service's creation reply is now async.
+        UUID orderId = UUID.randomUUID();
+        // Provisional only — same formula order-service uses, but overwritten with
+        // order-service's authoritative value once processOrderCreated() confirms it.
+        BigDecimal provisionalTotalAmount = unitPrice.multiply(BigDecimal.valueOf(quantity));
 
         SagaPayload payload = SagaPayload.builder()
                 .userId(userId)
                 .productId(productId)
                 .quantity(quantity)
                 .unitPrice(unitPrice)
-                .totalAmount(totalAmount)
+                .totalAmount(provisionalTotalAmount)
                 .currency(currency)
                 .orderId(orderId)
                 .build();
 
         SagaInstance saga = SagaInstance.builder()
                 .orderId(orderId.toString())
-                .currentStep(SagaStepName.ORDER_CREATED)
+                .currentStep(SagaStepName.ORDER_CREATE_REQUESTED)
                 .status(SagaStatus.STARTED)
                 .payload(toJson(payload))
                 .idempotencyKey(idempotencyKey)
@@ -154,12 +150,34 @@ public class SagaOrchestrationService {
             return raced;
         }
 
-        recordStep(saga, SagaStepName.ORDER_CREATED, SagaStepStatus.COMPLETED, null);
-        log.info("Saga started: id={}, orderId={}", saga.getId(), orderId);
+        recordStep(saga, SagaStepName.ORDER_CREATE_REQUESTED, SagaStepStatus.STARTED, null);
+        log.info("Saga started: id={}, orderId={} — order creation requested", saga.getId(), orderId);
 
-        publishStockReserveCommand(saga.getId(), payload);
+        publishOrderCreateCommand(saga.getId(), payload);
 
         return saga;
+    }
+
+    @Transactional
+    public void processOrderCreated(OrderCreatedEvent event) {
+        SagaInstance saga = findBySagaId(event.getSagaId());
+        SagaPayload payload = fromJson(saga.getPayload());
+
+        if (payload.getTotalAmount().compareTo(event.getTotalAmount()) != 0) {
+            log.warn("Saga [{}] provisional totalAmount {} != order-service authoritative totalAmount {} "
+                            + "— using order-service's value as canonical",
+                    saga.getId(), payload.getTotalAmount(), event.getTotalAmount());
+        }
+        payload.setTotalAmount(event.getTotalAmount());
+
+        recordStep(saga, SagaStepName.ORDER_CREATED, SagaStepStatus.COMPLETED, null);
+        saga.setCurrentStep(SagaStepName.ORDER_CREATED);
+        saga.setPayload(toJson(payload));
+        saga.setRecoveryAttempts(0);
+        sagaInstanceRepository.save(saga);
+        log.info("Saga [{}] ORDER_CREATED → reserving stock", saga.getId());
+
+        publishStockReserveCommand(saga.getId(), payload);
     }
 
     @Transactional
@@ -270,7 +288,9 @@ public class SagaOrchestrationService {
         SagaInstance saga = maybe.get();
         SagaPayload payload = fromJson(saga.getPayload());
 
-        if (saga.getStatus() == SagaStatus.STARTED && saga.getCurrentStep() == SagaStepName.ORDER_CREATED) {
+        if (saga.getStatus() == SagaStatus.STARTED && saga.getCurrentStep() == SagaStepName.ORDER_CREATE_REQUESTED) {
+            recoverOrderCreateRequested(saga, payload);
+        } else if (saga.getStatus() == SagaStatus.STARTED && saga.getCurrentStep() == SagaStepName.ORDER_CREATED) {
             recoverOrderCreated(saga, payload);
         } else if (saga.getStatus() == SagaStatus.STARTED && saga.getCurrentStep() == SagaStepName.PAYMENT_PROCESSED) {
             recoverPaymentProcessed(saga, payload);
@@ -284,6 +304,25 @@ public class SagaOrchestrationService {
             publishOrderCancelledAndFail(saga, payload.getOrderId(), reason);
         }
         return true;
+    }
+
+    private void recoverOrderCreateRequested(SagaInstance saga, SagaPayload payload) {
+        saga.setRecoveryAttempts(saga.getRecoveryAttempts() + 1);
+        if (saga.getRecoveryAttempts() >= maxRecoveryAttempts) {
+            String reason = "Saga recovery: no order-created reply after " + maxRecoveryAttempts + " attempts";
+            // Cancel unconditionally: from here we cannot tell "command never delivered" apart
+            // from "order was created but the reply was lost" — order.cancelled is a safe,
+            // idempotent no-op if order-service never actually created the row.
+            log.error("Saga [{}] exhausted recovery attempts waiting on order creation reply — escalating to "
+                    + "FAILED and cancelling order defensively", saga.getId());
+            recordStep(saga, SagaStepName.ORDER_CREATED, SagaStepStatus.FAILED, reason);
+            publishOrderCancelledAndFail(saga, payload.getOrderId(), reason);
+        } else {
+            sagaInstanceRepository.save(saga);
+            log.warn("Saga [{}] stuck waiting on order-created reply — resending OrderCreateCommand (attempt {}/{})",
+                    saga.getId(), saga.getRecoveryAttempts(), maxRecoveryAttempts);
+            publishOrderCreateCommand(saga.getId(), payload);
+        }
     }
 
     private void recoverOrderCreated(SagaInstance saga, SagaPayload payload) {
@@ -355,6 +394,23 @@ public class SagaOrchestrationService {
     @Transactional(readOnly = true)
     public List<SagaStep> findStepsBySagaId(UUID sagaId) {
         return sagaStepRepository.findBySagaInstanceIdOrderByCreatedAtAsc(sagaId);
+    }
+
+    private void publishOrderCreateCommand(UUID sagaId, SagaPayload payload) {
+        OrderCreateCommand cmd = OrderCreateCommand.builder()
+                .eventId(UUID.randomUUID())
+                .sagaId(sagaId)
+                .orderId(payload.getOrderId())
+                .userId(payload.getUserId())
+                .productId(payload.getProductId())
+                .quantity(payload.getQuantity())
+                .unitPrice(payload.getUnitPrice())
+                .idempotencyKey(sagaId + ":" + STEP_ORDER_CREATE)
+                .build();
+        cmd.init();
+        outboxEventRepository.save(toOutboxEvent(sagaId,
+                KafkaTopics.ORDER_CREATE_REQUEST, payload.getOrderId().toString(), cmd));
+        log.info("Saga [{}] → enqueued OrderCreateCommand to outbox", sagaId);
     }
 
     private void publishStockReserveCommand(UUID sagaId, SagaPayload payload) {
