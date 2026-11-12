@@ -20,79 +20,25 @@ See [Reliability Mechanisms](#reliability-mechanisms) for how each one works.
 
 ## Architecture
 
-```mermaid
-flowchart TB
-    Client(["Client"])
-    Orchestrator["Saga Orchestrator\n:8084 / gRPC :9084"]
-    Order["Order Service\n:8082 / gRPC :9082"]
-    Inventory["Inventory Service\n:8083 / gRPC :9083"]
-    Payment["Payment Service\n:8081 / gRPC :9081"]
-    Kafka[["Kafka"]]
-
-    Client -- "REST" --> Orchestrator
-    Orchestrator -- "gRPC (sync lookups)" --> Inventory
-    Orchestrator <-- "commands / events" --> Kafka
-    Kafka <--> Order
-    Kafka <--> Inventory
-    Kafka <--> Payment
-```
+<p align="center"><img src="docs/diagrams/architecture.svg" alt="Architecture: Client calls the Saga Orchestrator over REST; the orchestrator talks to Order, Payment and Inventory through Kafka and does sync gRPC lookups to Inventory; each service owns its own PostgreSQL database" width="900"></p>
 
 ---
 
 ## Saga Flow
 
+Solid arrows are commands, dashed arrows are events/replies, amber is a sync gRPC call, red marks failure and compensation steps.
+
 ### Happy Path
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Orchestrator
-    participant Inventory
-    participant Payment
-    participant Order
-
-    Client->>Orchestrator: POST /api/orders
-    Orchestrator->>Inventory: gRPC CheckStock / GetProduct
-    Orchestrator->>Order: order.create.request
-    Order-->>Orchestrator: order.created
-    Orchestrator->>Inventory: stock.reserve.request
-    Inventory-->>Orchestrator: stock.reserved
-    Orchestrator->>Payment: payment.process.request
-    Payment-->>Orchestrator: payment.processed
-    Orchestrator->>Order: order.confirmed
-    Note over Orchestrator: saga.status = COMPLETED
-```
+<p align="center"><img src="docs/diagrams/happy-path.svg" alt="Happy path: POST /api/orders, gRPC CheckStock/GetProduct, order.create.request / order.created, stock.reserve.request / stock.reserved, payment.process.request / payment.processed, order.confirmed, saga COMPLETED" width="900"></p>
 
 ### Compensation — Stock Reservation Fails
 
-```mermaid
-sequenceDiagram
-    participant Orchestrator
-    participant Inventory
-    participant Order
-
-    Orchestrator->>Inventory: stock.reserve.request
-    Inventory-->>Orchestrator: stock.reservation.failed
-    Orchestrator->>Order: order.cancelled
-    Note over Orchestrator: saga.status = FAILED
-```
+<p align="center"><img src="docs/diagrams/compensation-stock-failed.svg" alt="Stock reservation fails: stock.reserve.request, stock.reservation.failed, order.cancelled, saga FAILED" width="675"></p>
 
 ### Compensation — Payment Fails
 
-```mermaid
-sequenceDiagram
-    participant Orchestrator
-    participant Payment
-    participant Inventory
-    participant Order
-
-    Orchestrator->>Payment: payment.process.request
-    Payment-->>Orchestrator: payment.failed
-    Orchestrator->>Inventory: stock.release.request
-    Inventory-->>Orchestrator: stock.released
-    Orchestrator->>Order: order.cancelled
-    Note over Orchestrator: saga.status = FAILED
-```
+<p align="center"><img src="docs/diagrams/compensation-payment-failed.svg" alt="Payment fails: payment.process.request, payment.failed, stock.release.request / stock.released, order.cancelled, saga FAILED" width="820"></p>
 
 *(amounts >= 10,000 are auto-declined by the simulated gateway, to trigger this path on demand)*
 
